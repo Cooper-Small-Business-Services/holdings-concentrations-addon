@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" role="img" aria-label="Holdings Concentration">
+  <!-- The icon at 32 px and 48 px. The drawing holds three bars, so each bar
+       and each gap stays 2 px or more at 32 px. Each coordinate is a whole
+       unit, so each edge falls on a whole pixel at both sizes. -->
+  <rect x="1" y="1" width="14" height="14" rx="3" fill="#1A1A18"/>
+  <rect x="4" y="4" width="8" height="2" fill="#F5F3EE"/>
+  <rect x="4" y="7" width="5" height="2" fill="#F5F3EE"/>
+  <rect x="4" y="10" width="3" height="2" fill="#F5F3EE"/>
+</svg>
