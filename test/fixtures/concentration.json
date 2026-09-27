@@ -15,7 +15,10 @@
       "values": [
         ["Status", "='Concentration.Exposure'!B1"],
         ["Last run", "='Concentration.Exposure'!B2"],
-        ["Total value", "=SUM(Holdings!I2:I)"],
+        [
+          "Total value",
+          "=LET(c,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(Holdings!$1:$1),\"Value\"))),\nIF(ISNA(c),\"No Holdings column Value\",SUM(INDIRECT(\"Holdings!C\"&c,FALSE))))"
+        ],
         ["Looked through", "='Concentration.Exposure'!B9"],
         ["Not looked through", "='Concentration.Exposure'!B10"],
         [
@@ -32,7 +35,7 @@
       "range": "D3",
       "values": [
         [
-          "=LET(r,FILTER('Concentration.Exposure'!$D$5:$J,'Concentration.Exposure'!$D$5:$D<>\"\"),\nHSTACK(CHOOSECOLS(r,1,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6))))"
+          "=LET(r,IFNA(FILTER('Concentration.Exposure'!$D$5:$J,'Concentration.Exposure'!$D$5:$D<>\"\"),\"\"),\nIF(INDEX(r,1,1)=\"\",\"No fund looked through.\",\nHSTACK(CHOOSECOLS(r,1,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6)))))"
         ]
       ]
     },
@@ -51,17 +54,17 @@
         ["Composition", "Value", "% of portfolio"],
         [
           "=\"Stocks at \"&TEXT($B$15,\"0.00%\")&\" or more\"",
-          "=F11*$B$4",
+          "=IF(ISNUMBER($B$4),F11*$B$4,\"\")",
           "=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,\"stock\",'Concentration.Exposure'!$T$5:$T,\">=\"&$B$15)"
         ],
         [
           "=\"Stocks under \"&TEXT($B$15,\"0.00%\")",
-          "=F12*$B$4",
+          "=IF(ISNUMBER($B$4),F12*$B$4,\"\")",
           "=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,\"stock\",'Concentration.Exposure'!$T$5:$T,\"<\"&$B$15)"
         ],
         [
           "Not individual stocks",
-          "=F13*$B$4",
+          "=IF(ISNUMBER($B$4),F13*$B$4,\"\")",
           "=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,\"<>stock\")"
         ]
       ]
@@ -78,7 +81,7 @@
       "range": "H17",
       "values": [
         [
-          "=LET(LK,'Concentration.Exposure'!$O$5:$O,LN,'Concentration.Exposure'!$P$5:$P,LT,'Concentration.Exposure'!$Q$5:$Q,LC,'Concentration.Exposure'!$S$5:$S,LW,'Concentration.Exposure'!$T$5:$T,\nLS,'Concentration.Exposure'!$U$5:$AZ,LH,'Concentration.Exposure'!$U$4:$AZ$4,\nfid,FILTER('Concentration.Exposure'!$D$5:$D,'Concentration.Exposure'!$D$5:$D<>\"\"),\nf,FILTER(fid,MAP(fid,LAMBDA(x,SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,\"stock\")>0))),\nTRANSPOSE(f))"
+          "=LET(LK,'Concentration.Exposure'!$O$5:$O,LN,'Concentration.Exposure'!$P$5:$P,LT,'Concentration.Exposure'!$Q$5:$Q,LC,'Concentration.Exposure'!$S$5:$S,LW,'Concentration.Exposure'!$T$5:$T,\nLS,'Concentration.Exposure'!$U$5:$HL,LH,'Concentration.Exposure'!$U$4:$HL$4,\nfid,IFNA(FILTER('Concentration.Exposure'!$D$5:$D,'Concentration.Exposure'!$D$5:$D<>\"\"),\"\"),\nf,IFNA(FILTER(fid,MAP(fid,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,\"stock\")>0,FALSE)))),\"\"),\nTRANSPOSE(f))"
         ]
       ]
     },
@@ -86,7 +89,7 @@
       "range": "A18",
       "values": [
         [
-          "=LET(LK,'Concentration.Exposure'!$O$5:$O,LN,'Concentration.Exposure'!$P$5:$P,LT,'Concentration.Exposure'!$Q$5:$Q,LC,'Concentration.Exposure'!$S$5:$S,LW,'Concentration.Exposure'!$T$5:$T,\nLS,'Concentration.Exposure'!$U$5:$AZ,LH,'Concentration.Exposure'!$U$4:$AZ$4,\nfid,FILTER('Concentration.Exposure'!$D$5:$D,'Concentration.Exposure'!$D$5:$D<>\"\"),\nf,FILTER(fid,MAP(fid,LAMBDA(x,SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,\"stock\")>0))),\ntot,$B$4,thr,$B$15,\nnum,ARRAYFORMULA(IF(ISNUMBER(LS),LS,0)),\nisf,MAP(LH,LAMBDA(h,IF(h=\"\",0,IF(ISNUMBER(XMATCH(h,fid)),1,0)))),\ndw,ARRAYFORMULA(IF(ISNUMBER(LW),LW-MMULT(num,TRANSPOSE(isf)),0)),\nsel,ARRAYFORMULA((LC=\"stock\")*ISNUMBER(LW)*(LW>=thr)),\ntop,IF(SUM(sel)=0,HSTACK(\"\",\"No company at or above the threshold.\"),\n LET(sn,FILTER(LN,sel),st,FILTER(LT,sel),sw,FILTER(LW,sel),ss,FILTER(LS,sel),mx,MAX(sw),\n  fx,MAKEARRAY(ROWS(sw),ROWS(f),LAMBDA(i,j,IFERROR(N(INDEX(ss,i,XMATCH(INDEX(f,j),LH))),0))),\n  HSTACK(SEQUENCE(ROWS(sw)),sn,st,ARRAYFORMULA(sw*tot),sw,\n   MAP(sw,LAMBDA(x,SPARKLINE(x,{\"charttype\",\"bar\";\"max\",mx;\"color1\",\"#2a78d6\"}))),\n   ARRAYFORMULA(ROUND(FILTER(dw,sel),12)),fx))),\nrsel,ARRAYFORMULA((LC=\"stock\")*ISNUMBER(LW)*(LW<thr)),\nrw,SUMIFS(LW,LC,\"stock\",LW,\"<\"&thr),\nrc,COUNTIFS(LC,\"stock\",LW,\"<\"&thr),\nrf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,\"stock\",LW,\"<\"&thr),0))),\nrest,HSTACK(\"\",\"Stocks under \"&TEXT(thr,\"0.00%\")&\" (\"&TEXT(rc,\"#,##0\")&\")\",\"\",rw*tot,rw,\"\",ROUND(SUM(FILTER(dw,rsel)),12),TRANSPOSE(rf)),\nns,ARRAYFORMULA((LK<>\"\")*(LC<>\"stock\")),\nown,ARRAYFORMULA(ns*(((LEFT(LK,9)=\"residual:\")+(ABS(dw)>1E-12))>0)),\ngrp,ARRAYFORMULA(ns*(own=0)),\non,FILTER(LN,own),ok,FILTER(LK,own),oc,FILTER(LC,own),ow,FILTER(LW,own),os,FILTER(LS,own),\noname,MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,Holdings!$G$2:$G,Holdings!$D$2:$D),n))),\nkind,MAP(ok,oc,LAMBDA(k,c,IF(LEFT(k,9)=\"residual:\",\"not looked through\",SWITCH(c,\"fund\",\"fund, no holdings data\",\"unknown\",\"not in the SEC data\",c)))),\ncame,BYROW(os,LAMBDA(r,IFERROR(TEXTJOIN(\", \",TRUE,FILTER(LH,r<>\"\",r<>0)),\"\"))),\nownAll,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),\nkeep,ARRAYFORMULA(IF((LEFT(ok,9)=\"residual:\")*(ow=0),0,1)),\nownRows,FILTER(ownAll,keep),\ncls,UNIQUE(FILTER(LC,grp)),\ngw,MAP(cls,LAMBDA(x,SUM(FILTER(LW,grp,LC=x)))),\ngn,MAP(cls,LAMBDA(x,ROWS(FILTER(LW,grp,LC=x)))),\ngl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,\"cash\",\"Cash and money market funds\",\"derivative\",\"Derivatives\",\"treasury\",\"Treasury securities\",\"other\",\"Other holdings\",x)&\" inside funds (\"&TEXT(m,\"#,##0\")&\")\")),\ngf,MAP(cls,LAMBDA(x,TEXTJOIN(\", \",TRUE,MAP(fid,LAMBDA(y,IF(SUM(FILTER(INDEX(num,0,XMATCH(y,LH)),grp,LC=x))<>0,y,\"\")))))),\ngrpAll,HSTACK(gl,cls,ARRAYFORMULA(gw*tot),gw,gf),\nbig,ARRAYFORMULA(IF(ABS(gw*tot)>=100,1,0)),\nsm,ARRAYFORMULA(1-big),\nsmallRow,HSTACK(\"Other small holdings inside funds (\"&TEXT(SUM(FILTER(gn,sm)),\"#,##0\")&\")\",\n TEXTJOIN(\", \",TRUE,FILTER(cls,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),\n TEXTJOIN(\", \",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(\",\",TRUE,FILTER(gf,sm)),\",\"))))))),\nmain,IF(SUM(grp)=0,ownRows,IF(SUM(big)=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),\nnis,IF(SUM(grp)=0,SORT(main,4,FALSE),IF(SUM(sm)=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),\nblank,MAKEARRAY(ROWS(nis),1,LAMBDA(i,j,\"\")),\nIFNA(VSTACK(top,rest,\"\",\n HSTACK(\"\",\"Not individual stocks\"),\n {\"\",\"Line\",\"Kind\",\"Value\",\"% of portfolio\",\"Came from\"},\n HSTACK(blank,nis),\n \"\",\n HSTACK(\"\",\"Total of all lines\",\"\",SUM(LW)*tot,SUM(LW))),\"\"))"
+          "=LET(LK,'Concentration.Exposure'!$O$5:$O,LN,'Concentration.Exposure'!$P$5:$P,LT,'Concentration.Exposure'!$Q$5:$Q,LC,'Concentration.Exposure'!$S$5:$S,LW,'Concentration.Exposure'!$T$5:$T,\nLS,'Concentration.Exposure'!$U$5:$HL,LH,'Concentration.Exposure'!$U$4:$HL$4,\nfid,IFNA(FILTER('Concentration.Exposure'!$D$5:$D,'Concentration.Exposure'!$D$5:$D<>\"\"),\"\"),\nf,IFNA(FILTER(fid,MAP(fid,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,\"stock\")>0,FALSE)))),\"\"),\nhh,Holdings!$1:$1,\nhs,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),\"Symbol\"))),\nhd,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),\"Description\"))),\ntot,IF(ISNUMBER($B$4),$B$4,NA()),thr,$B$15,\nnum,ARRAYFORMULA(IF(ISNUMBER(LS),LS,0)),\nisf,MAP(LH,LAMBDA(h,IF(h=\"\",0,IF(ISNUMBER(XMATCH(h,fid)),1,0)))),\ndw,ARRAYFORMULA(IF(ISNUMBER(LW),LW-MMULT(num,TRANSPOSE(isf)),0)),\nsel,ARRAYFORMULA((LC=\"stock\")*ISNUMBER(LW)*(LW>=thr)),\ntop,IF(SUM(sel)=0,HSTACK(\"\",\"No company at or above the threshold.\"),\n LET(sn,FILTER(LN,sel),st,FILTER(LT,sel),sw,FILTER(LW,sel),ss,FILTER(LS,sel),mx,MAX(sw),\n  fx,MAKEARRAY(ROWS(sw),ROWS(f),LAMBDA(i,j,IFERROR(N(INDEX(ss,i,XMATCH(INDEX(f,j),LH))),0))),\n  HSTACK(SEQUENCE(ROWS(sw)),sn,st,ARRAYFORMULA(sw*tot),sw,\n   MAP(sw,LAMBDA(x,SPARKLINE(x,{\"charttype\",\"bar\";\"max\",mx;\"color1\",\"#2a78d6\"}))),\n   ARRAYFORMULA(ROUND(FILTER(dw,sel),12)),fx))),\nrsel,ARRAYFORMULA((LC=\"stock\")*ISNUMBER(LW)*(LW<thr)),\nrw,SUMIFS(LW,LC,\"stock\",LW,\"<\"&thr),\nrc,COUNTIFS(LC,\"stock\",LW,\"<\"&thr),\nrf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,\"stock\",LW,\"<\"&thr),0))),\nrest,HSTACK(\"\",\"Stocks under \"&TEXT(thr,\"0.00%\")&\" (\"&TEXT(rc,\"#,##0\")&\")\",\"\",rw*tot,rw,\"\",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),\nns,ARRAYFORMULA((LK<>\"\")*(LC<>\"stock\")),\nown,ARRAYFORMULA(ns*(((LEFT(LK,9)=\"residual:\")+(ABS(dw)>1E-12))>0)),\ngrp,ARRAYFORMULA(ns*(own=0)),\nkeep,ARRAYFORMULA(own*IF((LEFT(LK,9)=\"residual:\")*(LW=0),0,1)),\nnown,SUM(keep),\non,FILTER(LN,keep),ok,FILTER(LK,keep),oc,FILTER(LC,keep),ow,FILTER(LW,keep),os,FILTER(LS,keep),\noname,IF(ISNA(hs)+ISNA(hd),on,\n LET(sc,INDIRECT(\"Holdings!C\"&hs,FALSE),sy,ARRAYFORMULA(IF(ROW(sc)=1,\"\",sc)),de,INDIRECT(\"Holdings!C\"&hd,FALSE),\n  MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,sy,de),n))))),\nkind,MAP(ok,oc,LAMBDA(k,c,IF(LEFT(k,9)=\"residual:\",\"not looked through\",SWITCH(c,\"fund\",\"fund, no holdings data\",\"unknown\",\"not in the SEC data\",c)))),\ncame,BYROW(os,LAMBDA(r,IFERROR(TEXTJOIN(\", \",TRUE,FILTER(LH,r<>\"\",r<>0)),\"\"))),\nownRows,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),\ncls,UNIQUE(FILTER(LC,grp)),\ngw,MAP(cls,LAMBDA(x,SUM(FILTER(LW,grp,LC=x)))),\ngn,MAP(cls,LAMBDA(x,ROWS(FILTER(LW,grp,LC=x)))),\ngl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,\"cash\",\"Cash and money market funds\",\"derivative\",\"Derivatives\",\"treasury\",\"Treasury securities\",\"other\",\"Other holdings\",x)&\" inside funds (\"&TEXT(m,\"#,##0\")&\")\")),\ngf,MAP(cls,LAMBDA(x,TEXTJOIN(\", \",TRUE,MAP(fid,LAMBDA(y,IF(y=\"\",\"\",IF(SUM(FILTER(INDEX(num,0,XMATCH(y,LH)),grp,LC=x))<>0,y,\"\"))))))),\ngrpAll,HSTACK(gl,cls,ARRAYFORMULA(gw*tot),gw,gf),\nbig,ARRAYFORMULA(IF(ISNUMBER(gw*tot),IF(ABS(gw*tot)>=100,1,0),1)),\nsm,ARRAYFORMULA(1-big),\nng,IF(SUM(grp)=0,0,SUM(big)),\nnsm,IF(SUM(grp)=0,0,SUM(sm)),\nsmallRow,HSTACK(\"Other small holdings inside funds (\"&TEXT(SUM(FILTER(gn,sm)),\"#,##0\")&\")\",\n TEXTJOIN(\", \",TRUE,FILTER(cls,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),\n IFERROR(TEXTJOIN(\", \",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(\",\",TRUE,FILTER(gf,sm)),\",\")))))),\"\")),\nmain,IF(nown=0,FILTER(grpAll,big),IF(ng=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),\nnis,IF(nown+ng=0,IF(nsm=0,\"No line that is not an individual stock.\",smallRow),\n IF(nsm=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),\nblank,MAKEARRAY(ROWS(nis),1,LAMBDA(i,j,\"\")),\nIFNA(VSTACK(top,rest,\"\",\n HSTACK(\"\",\"Not individual stocks\"),\n {\"\",\"Line\",\"Kind\",\"Value\",\"% of portfolio\",\"Came from\"},\n HSTACK(blank,nis),\n \"\",\n HSTACK(\"\",\"Total of all lines\",\"\",SUM(LW)*tot,SUM(LW))),\"\"))"
         ]
       ]
     }

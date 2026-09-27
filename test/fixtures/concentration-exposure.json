@@ -49,10 +49,10 @@
   "format": {
     "hidden": true,
     "frozenRows": 4,
-    "columns": 52,
-    "columnWidths": { "A": 170, "B": 150, "C": 24, "D:M": 110, "N": 24, "O": 220, "P": 260, "Q:T": 90, "U:AZ": 110 },
+    "columns": 220,
+    "columnWidths": { "A": 170, "B": 150, "C": 24, "D:M": 110, "N": 24, "O": 220, "P": 260, "Q:T": 90, "U:HL": 110 },
     "cells": [
-      { "range": "A4:AZ4", "bold": true, "background": "#f7f6f1" },
+      { "range": "A4:HL4", "bold": true, "background": "#f7f6f1" },
       { "range": "B2", "numberFormat": "yyyy-mm-dd hh:mm:ss" },
       { "range": "B5", "numberFormat": "#,##0" },
       { "range": "B6", "numberFormat": "0.000000" },
@@ -63,7 +63,7 @@
       { "range": "H5:H", "numberFormat": "#,##0" },
       { "range": "I5:J", "numberFormat": "0.00000" },
       { "range": "K5:M", "numberFormat": "#,##0" },
-      { "range": "T5:AZ", "numberFormat": "0.00000" }
+      { "range": "T5:HL", "numberFormat": "0.00000" }
     ]
   }
 }

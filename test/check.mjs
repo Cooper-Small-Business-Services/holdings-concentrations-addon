@@ -12,6 +12,11 @@
  * layout of the report. The definition files in test/fixtures/ hold that
  * layout.
  *
+ * The harness does not calculate a formula. It reads the formula text. No
+ * formula can hold a column letter of the Holdings tab. Each range of the
+ * sources block must end at the column of position MAX_POSITIONS. Each
+ * FILTER must sit in IFNA or IFERROR, or GUARDED_FILTERS must name it.
+ *
  * Run 1 sends one real request to the concentration route with the key of the
  * environment variable HOLDINGS_API_KEY. The other runs send no request. The
  * harness prints no part of the key.
@@ -1005,6 +1010,120 @@ function bigAnswer(ids, lineCount) {
   };
 }
 
+/**
+ * The FILTER calls of the report formulas that need no IFNA and no IFERROR,
+ * by the text of their condition arguments. The guards are texts of the
+ * same formula. Together they make a call with no match unused. The reason
+ * states why.
+ */
+const GUARDED_FILTERS = {
+  sel: {
+    guards: ["top,IF(SUM(sel)=0,"],
+    reason: "top uses the stock rows only when a stock is at or above the threshold",
+  },
+  keep: {
+    guards: ["main,IF(nown=0,FILTER(grpAll,big),", "nis,IF(nown+ng=0,"],
+    reason: "main uses ownRows only when nown, the count of the direct lines, is above 0",
+  },
+  grp: {
+    guards: ["ng,IF(SUM(grp)=0,0,SUM(big)),", "nsm,IF(SUM(grp)=0,0,SUM(sm)),"],
+    reason: "ng and nsm are 0 when no line is in a group, so no group row is used",
+  },
+  "grp,LC=x": {
+    guards: ["cls,UNIQUE(FILTER(LC,grp)),"],
+    reason: "each class x comes from the lines of grp, so a line always matches",
+  },
+  big: {
+    guards: ["ng,IF(SUM(grp)=0,0,SUM(big)),", "main,IF(nown=0,FILTER(grpAll,big),IF(ng=0,", "nis,IF(nown+ng=0,"],
+    reason: "main uses the big group rows only when ng, the count of the big groups, is above 0",
+  },
+  sm: {
+    guards: ["nsm,IF(SUM(grp)=0,0,SUM(sm)),", "nis,IF(nown+ng=0,IF(nsm=0,", "IF(nsm=0,SORT(main,4,FALSE),"],
+    reason: "nis uses smallRow only when nsm, the count of the small groups, is above 0",
+  },
+};
+
+/**
+ * Each formula of a tab state: each cell text that starts with "=", and the
+ * formula of each conditional format.
+ */
+function formulasOf(stateText) {
+  const tab = JSON.parse(stateText);
+  const cells = [];
+  tab.grid.forEach((row, r) => {
+    row.forEach((value, c) => {
+      if (typeof value === "string" && value.startsWith("=")) cells.push({ at: `row ${r + 1} column ${c + 1}`, value });
+    });
+  });
+  return [...cells, ...tab.rules.map((rule, i) => ({ at: `conditional format ${i + 1}`, value: rule.formula }))];
+}
+
+/**
+ * The string literals of a formula, and the formula with each literal
+ * replaced by an empty literal.
+ */
+function splitLiterals(formula) {
+  const literals = [];
+  const code = formula.replace(/"(?:[^"]|"")*"/g, (text) => {
+    literals.push(text);
+    return '""';
+  });
+  return { code, literals };
+}
+
+/**
+ * Each FILTER call of a formula. A call holds its text, the text of its
+ * condition arguments, and the enclosing calls from the outside in, each
+ * with the index of the argument that holds the FILTER. The parser skips
+ * string literals, and it treats an array literal in braces as one call.
+ */
+function filterCalls(formula) {
+  const calls = [];
+  const stack = [];
+  let i = 0;
+  while (i < formula.length) {
+    const ch = formula[i];
+    if (ch === '"') {
+      i += 1;
+      while (i < formula.length && !(formula[i] === '"' && formula[i + 1] !== '"')) i += formula[i] === '"' ? 2 : 1;
+    } else if (ch === "(" || ch === "{") {
+      const name = ch === "{" ? "{" : (/[A-Za-z_][A-Za-z0-9_.]*$/.exec(formula.slice(0, i))?.[0] ?? "");
+      const outer = stack.map((f) => ({ name: f.name, arg: f.arg }));
+      stack.push({ name: name.toUpperCase(), arg: 0, start: i - name.length, commas: [], outer });
+    } else if (ch === "," || ch === ";") {
+      const top = stack.at(-1);
+      if (top) {
+        top.arg += 1;
+        top.commas.push(i);
+      }
+    } else if (ch === ")" || ch === "}") {
+      const frame = stack.pop();
+      if (frame?.name === "FILTER") {
+        const conditionAt = frame.commas[0] ?? i;
+        calls.push({
+          text: formula.slice(frame.start, i + 1),
+          condition: formula.slice(conditionAt + 1, i),
+          outer: frame.outer,
+        });
+      }
+    }
+    i += 1;
+  }
+  return calls;
+}
+
+/**
+ * The treatment of one FILTER call: the IFNA or IFERROR that holds it in its
+ * first argument, the guards of GUARDED_FILTERS, or null.
+ */
+function filterTreatment(call, formula) {
+  const wrap = call.outer.findLast((f) => (f.name === "IFNA" || f.name === "IFERROR") && f.arg === 0);
+  if (wrap) return wrap.name;
+  const guarded = GUARDED_FILTERS[call.condition];
+  if (guarded && guarded.guards.every((text) => formula.includes(text))) return `guard ${call.condition}`;
+  return null;
+}
+
 function main() {
   if (OFFLINE) {
     console.log("OFFLINE: the harness skips the one real request to the concentration route.\n");
@@ -1058,6 +1177,14 @@ function main() {
   check(context.tickerOf("BRK.B") === "BRK.B" && context.tickerOf("$abc") === "$abc", "a valid symbol is a ticker");
   check(context.tickerOf("CASH SWEEP") === null, "a symbol that fails the ticker pattern gives no ticker");
   check(context.columnNumber("A") === 1 && context.columnNumber("AZ") === 52, "columnNumber reads A and AZ");
+  check(
+    [1, 26, 27, 52, 220, 702, 703].every((n) => context.columnNumber(context.columnLetter(n)) === n),
+    "columnLetter is the inverse of columnNumber",
+  );
+  const small = new FakeSheet("small", 2, 2, []);
+  context.growGrid(small, 3, 5);
+  context.growGrid(small, 1, 1);
+  check(small.getMaxRows() === 3 && small.getMaxColumns() === 5, "growGrid adds rows and columns and never shrinks");
   console.log("  pass");
 
   console.log("\n== onOpen and onInstall");
@@ -1138,6 +1265,81 @@ function main() {
   const report = book.tab(REPORT_TAB);
   check(report.cell("B15") === 0.01, "the threshold cell B15 holds its default 0.01");
   check(report.cell("A18").startsWith("=LET(") && report.cell("A18").includes("\n"), "A18 holds the report formula");
+
+  console.log("\n== Report formulas");
+  const formulas = [EXPOSURE_TAB, REPORT_TAB].flatMap((tab) =>
+    formulasOf(created[tab]).map((f) => ({ ...f, at: `${tab} ${f.at}` })),
+  );
+  check(formulas.length > 10, `the two tabs hold the report formulas (${formulas.length})`);
+
+  const lettered = formulas.filter(({ value }) => {
+    const { code, literals } = splitLiterals(value);
+    return /'?Holdings'?!\$?[A-Z]/i.test(code) || literals.some((text) => /Holdings'?!\$?[A-Z]+\$?[\d:]/i.test(text));
+  });
+  check(
+    lettered.length === 0,
+    `no formula holds a reference of the form Holdings!<letter> (${lettered.map((f) => f.at).join(", ")})`,
+  );
+  const holdingsColumns = vm.runInContext("HOLDINGS_COLUMNS", context);
+  check(
+    report.cell("B4").includes('EXACT(TRIM(Holdings!$1:$1),"Value")'),
+    "B4 finds the Value column by the header text in row 1",
+  );
+  check(
+    holdingsColumns.every(
+      (name) => report.cell("B4").includes(`"${name}"`) || report.cell("A18").includes(`"${name}"`),
+    ),
+    `B4 and A18 find each column of findColumns by its header text (${holdingsColumns.join(", ")})`,
+  );
+  check(report.cell("B4").includes('"No Holdings column Value"'), "B4 shows a text when no Value column exists");
+
+  const lastSource = vm.runInContext("SOURCE_COLUMN + MAX_POSITIONS - 1", context);
+  const firstSource = vm.runInContext("SOURCE_COLUMN", context);
+  const exposureRange = /'Concentration\.Exposure'!\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d*)/g;
+  for (const cell of ["H17", "A18"]) {
+    const sourceRanges = [...report.cell(cell).matchAll(exposureRange)].filter(
+      (m) => columnNumber(m[1]) === firstSource,
+    );
+    check(sourceRanges.length === 2, `${cell} reads the sources block and the id row (${sourceRanges.length} ranges)`);
+    check(
+      sourceRanges.every((m) => columnNumber(m[3]) === lastSource),
+      `the source ranges of ${cell} end at column ${lastSource}, the column of position MAX_POSITIONS ` +
+        `(${sourceRanges.map((m) => m[0]).join(", ")})`,
+    );
+  }
+  const exposureState = JSON.parse(created[EXPOSURE_TAB]);
+  const exposureStyles = new Map(exposureState.styles);
+  check(exposureState.grid[0].length >= lastSource, `the Exposure grid holds column ${lastSource}`);
+  check(
+    new Map(exposureState.widths).get(lastSource) === 110,
+    `the column width of the sources block reaches column ${lastSource}`,
+  );
+  check(
+    exposureStyles.get(cellKey(4, lastSource))?.fontWeight === "bold" &&
+      exposureStyles.get(cellKey(5, lastSource))?.numberFormat === "0.00000",
+    `the header format and the number format of the sources block reach column ${lastSource}`,
+  );
+
+  const filterRows = [];
+  const usedGuards = new Set();
+  for (const { at, value } of formulas) {
+    for (const call of filterCalls(value)) {
+      const treatment = filterTreatment(call, value);
+      check(treatment !== null, `${at}: ${call.text} sits in IFNA or IFERROR, or GUARDED_FILTERS names it`);
+      if (treatment.startsWith("guard")) usedGuards.add(call.condition);
+      filterRows.push([at.replace(/^Concentration /, ""), call.text, treatment]);
+    }
+  }
+  check(filterRows.length > 0, "the report formulas hold FILTER calls");
+  check(
+    Object.keys(GUARDED_FILTERS).every((condition) => usedGuards.has(condition)),
+    "each entry of GUARDED_FILTERS guards a FILTER call",
+  );
+  console.log("  pass");
+  console.log("\nFILTER calls and their treatment:");
+  table(["cell", "call", "treatment"], filterRows);
+  console.log("\nGuards of GUARDED_FILTERS:");
+  for (const [condition, { reason }] of Object.entries(GUARDED_FILTERS)) console.log(`  ${condition}: ${reason}`);
 
   const call = state.fetchCalls[0];
   check(call.url === ROUTE_URL, "the request goes to the concentration route");
@@ -1330,9 +1532,10 @@ function main() {
   check(state.fetchCalls.length === 2, "run 2 calls the fake once");
   checkNoTabChange(reportState, logFrom, "run 2");
   check(x.cell("B1") === "OK", `B1 is OK (B1 holds "${x.cell("B1")}")`);
+  const exposureColumns = accepted[EXPOSURE_TAB].grid[0].length;
   check(
-    x.getMaxRows() === bigRows && x.getMaxColumns() === 60,
-    `the grid grew to ${bigRows} rows and 60 columns (${x.getMaxRows()} by ${x.getMaxColumns()})`,
+    x.getMaxRows() === bigRows && x.getMaxColumns() === exposureColumns,
+    `the grid grew to ${bigRows} rows and keeps ${exposureColumns} columns (${x.getMaxRows()} by ${x.getMaxColumns()})`,
   );
   check(at(5, 16) === "Line 0" && at(bigRows, 16) === `Line ${bigLines - 1}`, `column P holds the ${bigLines} lines`);
   const lastId = fortyIds[(bigLines - 1) % 40];
@@ -1349,7 +1552,7 @@ function main() {
   state.fetchHandler = () => fakeResponse(200, liveText);
   context.refreshConcentration();
   checkNoTabChange(reportState, logFrom, "run 3");
-  check(x.getMaxRows() === bigRows && x.getMaxColumns() === 60, "the grid does not shrink");
+  check(x.getMaxRows() === bigRows && x.getMaxColumns() === exposureColumns, "the grid does not shrink");
   check(lineFaults() === 0, "the lines and the sources of run 1 are back");
   check(
     x.block(5 + funds.length, 4, x.getMaxRows() - 4 - funds.length, 10).every((c) => c.every((v) => v === "")),

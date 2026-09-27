@@ -24,31 +24,77 @@ const REPORT_TAB = "Concentration";
 const TAB_ROWS = 1000;
 
 /**
- * The formula of D3: the funds that the route looked through, with the
- * report date, the count of holdings, the weight, and the covered part.
+ * The formula of B4: the sum of the Value column of the Holdings tab. The
+ * formula finds the column by the header text in row 1, with the match rule
+ * of findColumns. INDIRECT with the R1C1 text "C" and the column number reads
+ * the whole column, so the formula holds no column letter. The header text in
+ * row 1 adds nothing to the sum. When row 1 holds no Value column, B4 shows a
+ * text in place of a number.
  */
-const FUNDS_FORMULA = `=LET(r,FILTER('Concentration.Exposure'!$D$5:$J,'Concentration.Exposure'!$D$5:$D<>""),
-HSTACK(CHOOSECOLS(r,1,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6))))`;
+const TOTAL_FORMULA = `=LET(c,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(Holdings!$1:$1),"Value"))),
+IF(ISNA(c),"No Holdings column Value",SUM(INDIRECT("Holdings!C"&c,FALSE))))`;
+
+/**
+ * The formula of D3: the funds that the route looked through, with the
+ * report date, the count of holdings, the weight, and the covered part. When
+ * the route looked through no fund, D3 shows a text.
+ */
+const FUNDS_FORMULA = `=LET(r,IFNA(FILTER('Concentration.Exposure'!$D$5:$J,'Concentration.Exposure'!$D$5:$D<>""),""),
+IF(INDEX(r,1,1)="","No fund looked through.",
+HSTACK(CHOOSECOLS(r,1,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6)))))`;
+
+/**
+ * The column letters of the sources block of the tab Concentration.Exposure.
+ * The block starts at SOURCE_COLUMN. It ends at the column of position
+ * MAX_POSITIONS, because a request holds MAX_POSITIONS positions at most.
+ */
+function sourceColumns() {
+  return { first: columnLetter(SOURCE_COLUMN), last: columnLetter(SOURCE_COLUMN + MAX_POSITIONS - 1) };
+}
+
+/**
+ * The names at the start of the LET of H17 and of A18.
+ *
+ * LK, LN, LT, LC, and LW are the columns of the lines block. LS is the
+ * sources block, and LH is the row of the position ids. LS and LH end at the
+ * column of position MAX_POSITIONS. fid holds each fund that the route looked
+ * through. f holds each fund of fid that holds a stock. fid and f hold one
+ * empty string when no fund matches.
+ */
+function lineNames() {
+  const { first, last } = sourceColumns();
+  return `=LET(LK,'Concentration.Exposure'!$O$5:$O,LN,'Concentration.Exposure'!$P$5:$P,LT,'Concentration.Exposure'!$Q$5:$Q,LC,'Concentration.Exposure'!$S$5:$S,LW,'Concentration.Exposure'!$T$5:$T,
+LS,'Concentration.Exposure'!$${first}$5:$${last},LH,'Concentration.Exposure'!$${first}$4:$${last}$4,
+fid,IFNA(FILTER('Concentration.Exposure'!$D$5:$D,'Concentration.Exposure'!$D$5:$D<>""),""),
+f,IFNA(FILTER(fid,MAP(fid,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,"stock")>0,FALSE)))),""),`;
+}
 
 /**
  * The formula of H17: the header of the columns of the funds that hold a
- * stock, one column for each fund.
+ * stock, one column for each fund. The header is empty when no fund holds a
+ * stock.
  */
-const FUND_HEADER_FORMULA = `=LET(LK,'Concentration.Exposure'!$O$5:$O,LN,'Concentration.Exposure'!$P$5:$P,LT,'Concentration.Exposure'!$Q$5:$Q,LC,'Concentration.Exposure'!$S$5:$S,LW,'Concentration.Exposure'!$T$5:$T,
-LS,'Concentration.Exposure'!$U$5:$AZ,LH,'Concentration.Exposure'!$U$4:$AZ$4,
-fid,FILTER('Concentration.Exposure'!$D$5:$D,'Concentration.Exposure'!$D$5:$D<>""),
-f,FILTER(fid,MAP(fid,LAMBDA(x,SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,"stock")>0))),
+function fundHeaderFormula() {
+  return `${lineNames()}
 TRANSPOSE(f))`;
+}
 
 /**
  * The formula of A18: the stock table and the block of the lines that are
  * not individual stocks, as one spill.
+ *
+ * The formula finds the Symbol and the Description columns of the Holdings
+ * tab by the header text in row 1, as B4 finds the Value column. When B4
+ * holds no number, each value cell stays empty. Each FILTER that can find no
+ * row has a fallback in IFNA or IFERROR, or an IF before it that uses the
+ * FILTER only when a row matches.
  */
-const REPORT_FORMULA = `=LET(LK,'Concentration.Exposure'!$O$5:$O,LN,'Concentration.Exposure'!$P$5:$P,LT,'Concentration.Exposure'!$Q$5:$Q,LC,'Concentration.Exposure'!$S$5:$S,LW,'Concentration.Exposure'!$T$5:$T,
-LS,'Concentration.Exposure'!$U$5:$AZ,LH,'Concentration.Exposure'!$U$4:$AZ$4,
-fid,FILTER('Concentration.Exposure'!$D$5:$D,'Concentration.Exposure'!$D$5:$D<>""),
-f,FILTER(fid,MAP(fid,LAMBDA(x,SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,"stock")>0))),
-tot,$B$4,thr,$B$15,
+function reportFormula() {
+  return `${lineNames()}
+hh,Holdings!$1:$1,
+hs,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Symbol"))),
+hd,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Description"))),
+tot,IF(ISNUMBER($B$4),$B$4,NA()),thr,$B$15,
 num,ARRAYFORMULA(IF(ISNUMBER(LS),LS,0)),
 isf,MAP(LH,LAMBDA(h,IF(h="",0,IF(ISNUMBER(XMATCH(h,fid)),1,0)))),
 dw,ARRAYFORMULA(IF(ISNUMBER(LW),LW-MMULT(num,TRANSPOSE(isf)),0)),
@@ -63,30 +109,35 @@ rsel,ARRAYFORMULA((LC="stock")*ISNUMBER(LW)*(LW<thr)),
 rw,SUMIFS(LW,LC,"stock",LW,"<"&thr),
 rc,COUNTIFS(LC,"stock",LW,"<"&thr),
 rf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,"stock",LW,"<"&thr),0))),
-rest,HSTACK("","Stocks under "&TEXT(thr,"0.00%")&" ("&TEXT(rc,"#,##0")&")","",rw*tot,rw,"",ROUND(SUM(FILTER(dw,rsel)),12),TRANSPOSE(rf)),
+rest,HSTACK("","Stocks under "&TEXT(thr,"0.00%")&" ("&TEXT(rc,"#,##0")&")","",rw*tot,rw,"",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),
 ns,ARRAYFORMULA((LK<>"")*(LC<>"stock")),
 own,ARRAYFORMULA(ns*(((LEFT(LK,9)="residual:")+(ABS(dw)>1E-12))>0)),
 grp,ARRAYFORMULA(ns*(own=0)),
-on,FILTER(LN,own),ok,FILTER(LK,own),oc,FILTER(LC,own),ow,FILTER(LW,own),os,FILTER(LS,own),
-oname,MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,Holdings!$G$2:$G,Holdings!$D$2:$D),n))),
+keep,ARRAYFORMULA(own*IF((LEFT(LK,9)="residual:")*(LW=0),0,1)),
+nown,SUM(keep),
+on,FILTER(LN,keep),ok,FILTER(LK,keep),oc,FILTER(LC,keep),ow,FILTER(LW,keep),os,FILTER(LS,keep),
+oname,IF(ISNA(hs)+ISNA(hd),on,
+ LET(sc,INDIRECT("Holdings!C"&hs,FALSE),sy,ARRAYFORMULA(IF(ROW(sc)=1,"",sc)),de,INDIRECT("Holdings!C"&hd,FALSE),
+  MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,sy,de),n))))),
 kind,MAP(ok,oc,LAMBDA(k,c,IF(LEFT(k,9)="residual:","not looked through",SWITCH(c,"fund","fund, no holdings data","unknown","not in the SEC data",c)))),
 came,BYROW(os,LAMBDA(r,IFERROR(TEXTJOIN(", ",TRUE,FILTER(LH,r<>"",r<>0)),""))),
-ownAll,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),
-keep,ARRAYFORMULA(IF((LEFT(ok,9)="residual:")*(ow=0),0,1)),
-ownRows,FILTER(ownAll,keep),
+ownRows,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),
 cls,UNIQUE(FILTER(LC,grp)),
 gw,MAP(cls,LAMBDA(x,SUM(FILTER(LW,grp,LC=x)))),
 gn,MAP(cls,LAMBDA(x,ROWS(FILTER(LW,grp,LC=x)))),
 gl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,"cash","Cash and money market funds","derivative","Derivatives","treasury","Treasury securities","other","Other holdings",x)&" inside funds ("&TEXT(m,"#,##0")&")")),
-gf,MAP(cls,LAMBDA(x,TEXTJOIN(", ",TRUE,MAP(fid,LAMBDA(y,IF(SUM(FILTER(INDEX(num,0,XMATCH(y,LH)),grp,LC=x))<>0,y,"")))))),
+gf,MAP(cls,LAMBDA(x,TEXTJOIN(", ",TRUE,MAP(fid,LAMBDA(y,IF(y="","",IF(SUM(FILTER(INDEX(num,0,XMATCH(y,LH)),grp,LC=x))<>0,y,""))))))),
 grpAll,HSTACK(gl,cls,ARRAYFORMULA(gw*tot),gw,gf),
-big,ARRAYFORMULA(IF(ABS(gw*tot)>=100,1,0)),
+big,ARRAYFORMULA(IF(ISNUMBER(gw*tot),IF(ABS(gw*tot)>=100,1,0),1)),
 sm,ARRAYFORMULA(1-big),
+ng,IF(SUM(grp)=0,0,SUM(big)),
+nsm,IF(SUM(grp)=0,0,SUM(sm)),
 smallRow,HSTACK("Other small holdings inside funds ("&TEXT(SUM(FILTER(gn,sm)),"#,##0")&")",
  TEXTJOIN(", ",TRUE,FILTER(cls,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),
- TEXTJOIN(", ",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(",",TRUE,FILTER(gf,sm)),","))))))),
-main,IF(SUM(grp)=0,ownRows,IF(SUM(big)=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),
-nis,IF(SUM(grp)=0,SORT(main,4,FALSE),IF(SUM(sm)=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),
+ IFERROR(TEXTJOIN(", ",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(",",TRUE,FILTER(gf,sm)),",")))))),"")),
+main,IF(nown=0,FILTER(grpAll,big),IF(ng=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),
+nis,IF(nown+ng=0,IF(nsm=0,"No line that is not an individual stock.",smallRow),
+ IF(nsm=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),
 blank,MAKEARRAY(ROWS(nis),1,LAMBDA(i,j,"")),
 IFNA(VSTACK(top,rest,"",
  HSTACK("","Not individual stocks"),
@@ -94,19 +145,22 @@ IFNA(VSTACK(top,rest,"",
  HSTACK(blank,nis),
  "",
  HSTACK("","Total of all lines","",SUM(LW)*tot,SUM(LW))),""))`;
+}
 
 /**
  * The layout of the tab Concentration.Exposure. The cells hold the labels
- * alone. The refresh writes the status, the time, and the answer.
+ * alone. The refresh writes the status, the time, and the answer. The grid
+ * holds the source column of each position up to MAX_POSITIONS.
  */
 function exposureLayout() {
+  const { first, last } = sourceColumns();
   return {
     name: EXPOSURE_TAB,
     rows: TAB_ROWS,
-    columns: 52,
+    columns: SOURCE_COLUMN + MAX_POSITIONS - 1,
     hidden: true,
     frozenRows: 4,
-    columnWidths: { A: 170, B: 150, C: 24, "D:M": 110, N: 24, O: 220, P: 260, "Q:T": 90, "U:AZ": 110 },
+    columnWidths: { A: 170, B: 150, C: 24, "D:M": 110, N: 24, O: 220, P: 260, "Q:T": 90, [`${first}:${last}`]: 110 },
     cells: [
       { range: "A1:A2", values: [["Status"], ["Last run"]] },
       {
@@ -144,7 +198,7 @@ function exposureLayout() {
       { range: "O4:T4", values: [["key", "name", "ticker", "lei", "class", "weight"]] },
     ],
     styles: [
-      { range: "A4:AZ4", bold: true, background: "#f7f6f1" },
+      { range: `A4:${last}4`, bold: true, background: "#f7f6f1" },
       { range: "B2", numberFormat: "yyyy-mm-dd hh:mm:ss" },
       { range: "B5", numberFormat: "#,##0" },
       { range: "B6", numberFormat: "0.000000" },
@@ -155,7 +209,7 @@ function exposureLayout() {
       { range: "H5:H", numberFormat: "#,##0" },
       { range: "I5:J", numberFormat: "0.00000" },
       { range: "K5:M", numberFormat: "#,##0" },
-      { range: "T5:AZ", numberFormat: "0.00000" },
+      { range: `T5:${last}`, numberFormat: "0.00000" },
     ],
     conditional: [],
     validation: [],
@@ -182,7 +236,7 @@ function reportLayout() {
         values: [
           ["Status", "='Concentration.Exposure'!B1"],
           ["Last run", "='Concentration.Exposure'!B2"],
-          ["Total value", "=SUM(Holdings!I2:I)"],
+          ["Total value", TOTAL_FORMULA],
           ["Looked through", "='Concentration.Exposure'!B9"],
           ["Not looked through", "='Concentration.Exposure'!B10"],
           [
@@ -208,25 +262,25 @@ function reportLayout() {
           ["Composition", "Value", "% of portfolio"],
           [
             '="Stocks at "&TEXT($B$15,"0.00%")&" or more"',
-            "=F11*$B$4",
+            '=IF(ISNUMBER($B$4),F11*$B$4,"")',
             `=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,"stock",'Concentration.Exposure'!$T$5:$T,">="&$B$15)`,
           ],
           [
             '="Stocks under "&TEXT($B$15,"0.00%")',
-            "=F12*$B$4",
+            '=IF(ISNUMBER($B$4),F12*$B$4,"")',
             `=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,"stock",'Concentration.Exposure'!$T$5:$T,"<"&$B$15)`,
           ],
           [
             "Not individual stocks",
-            "=F13*$B$4",
+            '=IF(ISNUMBER($B$4),F13*$B$4,"")',
             `=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,"<>stock")`,
           ],
         ],
       },
       { range: "A15:C15", values: [["Threshold", 0.01, "Type a percent. Each company at or above it gets a row."]] },
       { range: "A17:G17", values: [["Rank", "Company", "Ticker", "Value", "% of portfolio", "", "Direct"]] },
-      { range: "H17", values: [[FUND_HEADER_FORMULA]] },
-      { range: "A18", values: [[REPORT_FORMULA]] },
+      { range: "H17", values: [[fundHeaderFormula()]] },
+      { range: "A18", values: [[reportFormula()]] },
     ],
     styles: [
       { range: "A1", bold: true, fontSize: 16 },
@@ -338,6 +392,17 @@ function sizeGrid(sheet, rows, columns) {
  */
 function columnNumber(letters) {
   return [...letters].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0);
+}
+
+/**
+ * The column letter of a column number, such as A for 1 and AA for 27.
+ */
+function columnLetter(number) {
+  let letters = "";
+  for (let n = number; n > 0; n = Math.floor((n - 1) / 26)) {
+    letters = String.fromCharCode(65 + ((n - 1) % 26)) + letters;
+  }
+  return letters;
 }
 
 /**
