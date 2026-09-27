@@ -1,12 +1,11 @@
 name: Checks
 
-# Each pull request and each push to main-v1 runs the format check and the
-# test harness. This workflow deploys nothing.
+# Each pull request runs the format check and the test harness. This
+# workflow deploys nothing. The Deploy workflow runs the same checks on a
+# push to main.
 
 on:
   pull_request:
-  push:
-    branches: [main-v1]
 
 permissions: {}
 
