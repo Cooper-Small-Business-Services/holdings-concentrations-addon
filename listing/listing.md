@@ -41,14 +41,14 @@ WHAT YOU GET
 - The date of the portfolio report of each fund, so you know how current the data is.
 
 HOW TO START
-1. Get a free API key at https://www.coopersbs.com/data/. Enter your email address, agree to the Terms of Service, and copy the key that the page shows. The page shows the key only once. Click the link in the email we send you within 24 hours, or the key stops working.
+1. Get a free API key at https://www.coopersbs.com/data/. Enter your email address, agree to the Terms of Service, and copy the key that the page shows. Verify your email within 24 hours to keep the key active.
 2. Open your Tiller spreadsheet and choose Extensions > Holdings Concentration for Tiller > Set API key. Paste your key.
 3. Choose Extensions > Holdings Concentration for Tiller > Refresh. The add-on builds your report.
 
 Run Refresh again after your holdings change. The add-on never runs on its own. If a refresh fails, the Status line at the top of the Concentration tab shows the reason, and your last good report stays in place.
 
 WHAT THE ADD-ON SENDS
-The add-on works with a free fund data service that Cooper Small Business Services runs at data.coopersbs.com. The service holds the holdings of U.S. ETFs and mutual funds. The data comes from the public portfolio reports that funds file with the U.S. Securities and Exchange Commission.
+The add-on works with the fund API that Cooper Small Business Services runs at data.coopersbs.com. The service holds the holdings of U.S. ETFs and mutual funds. The data comes from the public portfolio reports that funds file with the U.S. Securities and Exchange Commission.
 
 When you choose Refresh, the add-on sends one request to the service. For each holding, the request holds only:
 - the ticker symbol, or the description of the holding when it has no symbol
@@ -66,13 +66,13 @@ LIMITS
 - One refresh can include up to 200 different holdings.
 
 PRICE
-The add-on and the API key are free.
+Free of charge
 
 SUPPORT
-Ask a question or report a problem at https://github.com/coopersbs/holdings-concentrations-addon/issues. Issues are public, so do not post your API key or details of your holdings.
+Ask a question or report an issue at https://github.com/coopersbs/holdings-concentrations-addon/issues. Issues are public, so do not post your API key or details of your holdings.
 
 ABOUT US
-Cooper Small Business Services is a veteran-owned small business that provides virtual bookkeeping services to small businesses. Learn more at https://www.coopersbs.com.
+Cooper Small Business Services is a veteran-owned small business that provides bookkeeping services to small businesses. Learn more at https://www.coopersbs.com.
 
 Tiller is not affiliated with this add-on. Tiller does not make, endorse, or support it. Google Sheets is a trademark of Google LLC.
 ```

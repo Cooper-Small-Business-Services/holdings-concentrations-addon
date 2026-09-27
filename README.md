@@ -8,27 +8,25 @@
   </a>
 </p>
 
-# Holdings Concentration for Tiller
+# Holdings Concentration Addon for Tiller Money
 
-A Google Sheets add-on that shows how much of your Tiller portfolio sits in each company, including the stocks inside
-your funds.
-
-Tiller is not affiliated with this add-on. Tiller does not make, endorse, or support it.
+A Google Sheets add-on that shows your portfolio concentration in U.S. equities and other holdings. The add-on uses an
+API built and maintained by Cooper Small Business Services. The API vends and serves fund data sourced from SEC Form
+N-Port Fillings. This enables the add-on to "look through" funds to calculate the weight of individual holdings. Use of
+the API requires a free API Key.
 
 ## Get a free API key
-
-The add-on and the API key are free.
 
 1. Go to [coopersbs.com/data](https://www.coopersbs.com/data/).
 2. Enter your email address. Use an address without a plus sign (+).
 3. Agree to the [Terms of Service](https://www.coopersbs.com/data/terms/), complete the visitor check, and click **Get
    my key**.
-4. Copy the key from the page and keep it somewhere safe. The page shows it only once.
-5. Open the email we send you and click the link within 24 hours. If you do not click it, the key stops working.
+4. Copy the key from the page and keep it somewhere safe.
+5. Verify your email within 24 hours to keep the key active.
 6. In your Tiller spreadsheet, choose **Extensions > Holdings Concentration for Tiller > Set API key** and paste the
    key.
 
-Lost your key? Sign up again with the same email address. You get a new key, and the old key stops working.
+Lost your key? Sign up again with the same email address.
 
 ## Limits
 
@@ -37,15 +35,18 @@ Lost your key? Sign up again with the same email address. You get a new key, and
 
 ## Support
 
-Ask a question or report a problem on the [Issues](https://github.com/coopersbs/holdings-concentrations-addon/issues)
-tab of this repository. Issues are public, so do not post your API key or details of your holdings.
+Ask a question or report an issue on the [Issues](https://github.com/coopersbs/holdings-concentrations-addon/issues) tab
+of this repository. Issues are public, so do not post your API key or details of your holdings.
 
 ## About us
 
-Cooper Small Business Services is a veteran-owned small business that provides virtual bookkeeping services to small
-businesses in all 50 states. We built this add-on and the free fund data service behind it. Learn more at
-[www.coopersbs.com](https://www.coopersbs.com).
+Cooper Small Business Services is a veteran-owned small business that provides bookkeeping services to small businesses.
+We built this add-on and the fund API behind it. Learn more at [www.coopersbs.com](https://www.coopersbs.com).
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Disclaimer
+
+Tiller Money is not affiliated with this add-on. Tiller does not make, endorse, or support it.
