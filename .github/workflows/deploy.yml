@@ -47,6 +47,9 @@ jobs:
     needs: checks
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # The environment holds the three Google secrets of the deploy. No other
+    # job can read them.
+    environment: Deployment
     # The deploy asks GitHub for an OIDC token. The Workload Identity
     # provider accepts the token of this repository on refs/heads/main alone.
     permissions:
