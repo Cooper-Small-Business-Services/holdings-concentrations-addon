@@ -1,0 +1,87 @@
+name: Deploy
+
+# A push to main runs the format check and the test harness, then deploys
+# the script to the add-on. No other event deploys.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# Two deploys at the same time can move the deployment to an old version.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Each action is pinned to a commit SHA. A tag can move to other code
+      # after a repository compromise. A SHA cannot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Install the format tool
+        run: npm ci --ignore-scripts
+
+      - name: Check the format
+        run: npm run format:check
+
+      # The harness sends one real request to the concentration route. The
+      # key belongs to CI alone, and the harness prints no part of it.
+      - name: Test the script
+        env:
+          HOLDINGS_API_KEY: ${{ secrets.HOLDINGS_API_KEY }}
+        run: node test/check.mjs
+
+  deploy:
+    needs: checks
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The deploy asks GitHub for an OIDC token. The Workload Identity
+    # provider accepts the token of this repository on refs/heads/main alone.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      # The action exchanges the GitHub OIDC token for a federated token. It
+      # signs a JWT as the service account with that token, then exchanges
+      # the JWT for an access token of the script owner through domain-wide
+      # delegation. No key file exists. The token lives one hour, and the
+      # action masks it in the log. The provider, the service account, and
+      # the subject are secrets, so the public log masks them too.
+      - id: google
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_subject: ${{ secrets.GCP_DELEGATION_SUBJECT }}
+          access_token_scopes: |
+            https://www.googleapis.com/auth/script.projects
+            https://www.googleapis.com/auth/script.deployments
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Deploy the script to the add-on
+        env:
+          ADDON_SCRIPT_ID: ${{ vars.ADDON_SCRIPT_ID }}
+          ADDON_ACCESS_TOKEN: ${{ steps.google.outputs.access_token }}
+        run: node scripts/deploy.mjs
