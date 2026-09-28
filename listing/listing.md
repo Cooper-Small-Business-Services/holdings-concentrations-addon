@@ -69,7 +69,7 @@ PRICE
 Free of charge
 
 SUPPORT
-Ask a question or report an issue at https://github.com/coopersbs/holdings-concentrations-addon/issues. Issues are public, so do not post your API key or details of your holdings.
+Ask a question or report an issue at https://github.com/Cooper-Small-Business-Services/holdings-concentrations-addon/issues. Issues are public, so do not post your API key or details of your holdings.
 
 ABOUT US
 Cooper Small Business Services is a veteran-owned small business that provides bookkeeping services to small businesses. Learn more at https://www.coopersbs.com.
@@ -94,9 +94,9 @@ Free of charge
 
 ## Support links
 
-| Field            | URL                                                               |
-| ---------------- | ----------------------------------------------------------------- |
-| Terms of service | https://www.coopersbs.com/data/terms/                             |
-| Privacy policy   | https://www.coopersbs.com/privacy/                                |
-| Support          | https://github.com/coopersbs/holdings-concentrations-addon/issues |
-| Homepage         | Open. No homepage URL is chosen yet.                              |
+| Field            | URL                                                                                    |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| Terms of service | https://www.coopersbs.com/data/terms/                                                  |
+| Privacy policy   | https://www.coopersbs.com/privacy/                                                     |
+| Support          | https://github.com/Cooper-Small-Business-Services/holdings-concentrations-addon/issues |
+| Homepage         | Open. No homepage URL is chosen yet.                                                   |

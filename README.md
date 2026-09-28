@@ -35,8 +35,9 @@ Lost your key? Sign up again with the same email address.
 
 ## Support
 
-Ask a question or report an issue on the [Issues](https://github.com/coopersbs/holdings-concentrations-addon/issues) tab
-of this repository. Issues are public, so do not post your API key or details of your holdings.
+Ask a question or report an issue on the
+[Issues](https://github.com/Cooper-Small-Business-Services/holdings-concentrations-addon/issues) tab of this repository.
+Issues are public, so do not post your API key or details of your holdings.
 
 ## About us
 
