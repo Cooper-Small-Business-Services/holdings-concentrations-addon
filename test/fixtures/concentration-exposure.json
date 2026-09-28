@@ -1,6 +1,6 @@
 {
   "tab": "Concentration.Exposure",
-  "note": "The answer of the concentration route. The script writes B1, B2, B5:B12, D5:M, O5:T, and one source column for each position from column U, with the position id in row 4. This file writes the labels and the format alone. The tab holds no formula and no dollar value.",
+  "note": "The answer of the concentration route. The script writes B1, B2, B5:B12, D5:M, O5:T, and one source column for each position from column U, with the position id in row 4. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. This file writes the labels and the format alone. The tab holds no formula and no dollar value.",
   "cells": [
     {
       "range": "A1:A2",
@@ -44,6 +44,10 @@
     {
       "range": "O4:T4",
       "values": [["key", "name", "ticker", "lei", "class", "weight"]]
+    },
+    {
+      "range": "A14:B14",
+      "values": [["runStart", "seconds"]]
     }
   ],
   "format": {
@@ -53,6 +57,9 @@
     "columnWidths": { "A": 170, "B": 150, "C": 24, "D:M": 110, "N": 24, "O": 220, "P": 260, "Q:T": 90, "U:HL": 110 },
     "cells": [
       { "range": "A4:HL4", "bold": true, "background": "#f7f6f1" },
+      { "range": "A14:B14", "bold": true, "background": "#f7f6f1" },
+      { "range": "A15:A24", "numberFormat": "yyyy-mm-dd hh:mm:ss" },
+      { "range": "B15:B24", "numberFormat": "0.000" },
       { "range": "B2", "numberFormat": "yyyy-mm-dd hh:mm:ss" },
       { "range": "B5", "numberFormat": "#,##0" },
       { "range": "B6", "numberFormat": "0.000000" },
