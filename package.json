@@ -1,0 +1,22 @@
+{
+  "name": "holdings-concentrations-addon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Holdings Concentration for Tiller, an add-on for Google Sheets",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node test/check.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "deploy:dry-run": "node scripts/deploy.mjs --dry-run",
+    "build:graphics": "node listing/graphics/src/build.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "prettier": "3.9.6"
+  }
+}
