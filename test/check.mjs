@@ -12,7 +12,8 @@
  * layout of the report. The definition files in test/fixtures/ hold that
  * layout.
  *
- * The harness does not calculate a formula. It reads the formula text. No
+ * The harness calculates the two run-time formulas B8 and B9 of the report
+ * alone, with a small evaluator. It reads the text of each other formula. No
  * formula can hold a column letter of the Holdings tab. Each range of the
  * sources block must end at the column of position MAX_POSITIONS. Each
  * FILTER must sit in IFNA or IFERROR, or GUARDED_FILTERS must name it.
@@ -610,6 +611,9 @@ const services = {
   SpreadsheetApp: {
     getActiveSpreadsheet: () => book,
     getUi: fakeUi,
+    flush: () => {
+      state.log.push({ op: "flush" });
+    },
     newConditionalFormatRule: () =>
       fakeBuilder({
         whenFormulaSatisfied: (rule, formula) => (rule.formula = formula),
@@ -960,6 +964,98 @@ function checkNoTabChange(reportBefore, logFrom, name) {
 }
 
 /**
+ * The rows of the run-time block A15:B24 of the Exposure tab, with each
+ * start time in milliseconds.
+ */
+function runRows() {
+  return book
+    .tab(EXPOSURE_TAB)
+    .block(15, 1, 10, 2)
+    .map(([start, seconds]) => [isDate(start) ? start.getTime() : start, seconds]);
+}
+
+/**
+ * The value of a formula of the report that reads the run-time block. The
+ * evaluator knows the parts that the two run-time formulas use alone: a
+ * number, a text in quotes, a reference to a cell or a range of the tab
+ * Concentration.Exposure, the comparison `=`, and the functions IF,
+ * ISNUMBER, COUNT, and AVERAGE. COUNT and AVERAGE read the numbers of a
+ * range and skip each other cell, as Google Sheets does. AVERAGE of no number
+ * gives the error #DIV/0!. Another part stops the harness.
+ */
+function calculate(formula, sheet) {
+  const body = formula.replace(/^=/, "");
+  const tokens =
+    body.match(/'[^']*'!\$?[A-Z]+\$?\d+(?::\$?[A-Z]+\$?\d+)?|"[^"]*"|[A-Z]+\(|\d+(?:\.\d+)?|[(),=]/g) ?? [];
+  if (tokens.join("") !== body) throw new Error(`The evaluator cannot read the formula ${formula}.`);
+  let i = 0;
+  const next = () => tokens[i++];
+  const expect = (token) => {
+    if (next() !== token) throw new Error(`The evaluator expected "${token}" in ${formula}.`);
+  };
+  const primary = () => {
+    const token = next();
+    if (token.endsWith("(")) {
+      const args = [];
+      if (tokens[i] !== ")") {
+        args.push(expression());
+        while (tokens[i] === ",") {
+          next();
+          args.push(expression());
+        }
+      }
+      expect(")");
+      return { call: token.slice(0, -1), args };
+    }
+    if (token.startsWith("'")) {
+      const [tab, a1] = token.split("!");
+      if (tab !== `'${EXPOSURE_TAB}'`) throw new Error(`The evaluator reads ${EXPOSURE_TAB} alone, not ${tab}.`);
+      return {
+        ref: parseA1(a1.replaceAll("$", ""), sheet.getMaxRows(), sheet.getMaxColumns()),
+        single: !a1.includes(":"),
+      };
+    }
+    if (token.startsWith('"')) return { value: token.slice(1, -1) };
+    if (/^\d/.test(token)) return { value: Number(token) };
+    throw new Error(`The evaluator cannot read "${token}" in ${formula}.`);
+  };
+  const expression = () => {
+    const left = primary();
+    if (tokens[i] !== "=") return left;
+    next();
+    return { equal: [left, primary()] };
+  };
+  const numbers = (node) => {
+    if (!node.ref) throw new Error("COUNT and AVERAGE take a range in the run-time formulas.");
+    const { row, column, rows, columns } = node.ref;
+    return sheet
+      .block(row, column, rows, columns)
+      .flat()
+      .filter((v) => typeof v === "number");
+  };
+  const value = (node) => {
+    if ("value" in node) return node.value;
+    if (node.ref) {
+      if (!node.single) throw new Error("A range stands alone in the run-time formulas.");
+      return sheet.block(node.ref.row, node.ref.column, 1, 1)[0][0];
+    }
+    if (node.equal) return value(node.equal[0]) === value(node.equal[1]);
+    const { call, args } = node;
+    if (call === "IF") return value(args[0]) ? value(args[1]) : value(args[2]);
+    if (call === "ISNUMBER") return typeof value(args[0]) === "number";
+    if (call === "COUNT") return numbers(args[0]).length;
+    if (call === "AVERAGE") {
+      const list = numbers(args[0]);
+      return list.length === 0 ? "#DIV/0!" : list.reduce((a, b) => a + b, 0) / list.length;
+    }
+    throw new Error(`The evaluator does not know the function ${call}.`);
+  };
+  const tree = expression();
+  if (i !== tokens.length) throw new Error(`The evaluator did not read the whole formula ${formula}.`);
+  return value(tree);
+}
+
+/**
  * The count of setValues calls in the log from the index `from`.
  */
 function writesSince(from) {
@@ -1148,6 +1244,59 @@ function main() {
     [REPORT_TAB]: expectedState(acceptedDefinition(REPORT_TAB)),
   };
 
+  /**
+   * Run Refresh once, and give the time before and after the call in
+   * milliseconds.
+   */
+  const timedRun = () => {
+    const before = Date.now();
+    context.refreshConcentration();
+    return { before, after: Date.now() };
+  };
+
+  /**
+   * The start time of each good run, newest first, as the harness expects
+   * the run-time block to hold it.
+   */
+  const runStarts = [];
+
+  /**
+   * Check that a good run put its start time and its seconds at the top of
+   * the run-time block, and that the block holds the 10 newest good runs
+   * alone, newest first.
+   */
+  const checkRecorded = (name, times) => {
+    const rows = runRows();
+    const [start, seconds] = rows[0];
+    check(start >= times.before && start <= times.after, `${name}: A15 holds the start time of the run`);
+    check(
+      typeof seconds === "number" && seconds >= 0 && seconds <= (times.after - times.before) / 1000 + 1e-9,
+      `${name}: B15 holds the seconds of the run (${seconds})`,
+    );
+    runStarts.unshift(start);
+    checkBlock(name);
+  };
+
+  /**
+   * Check that the run-time block holds the 10 newest good runs alone,
+   * newest first.
+   */
+  const checkBlock = (name) => {
+    const kept = runStarts.slice(0, 10);
+    check(
+      runRows().every(([s, sec], n) =>
+        n < kept.length ? s === kept[n] && typeof sec === "number" : s === "" && sec === "",
+      ),
+      `${name}: the run-time block holds the ${kept.length} newest good runs, newest first`,
+    );
+  };
+
+  /**
+   * Check that a run with a fault, or a run that cannot get the lock, adds
+   * no row to the run-time block.
+   */
+  const checkNoRecord = (name) => checkBlock(`${name} adds no run time`);
+
   console.log("== Manifest");
   const manifest = JSON.parse(readFileSync(MANIFEST_FILE, "utf8"));
   check(JSON.stringify(manifest.oauthScopes) === JSON.stringify(SCOPES), "the manifest holds the two scopes alone");
@@ -1239,7 +1388,7 @@ function main() {
   check(JSON.stringify(book.names()) === '["Holdings"]', "the spreadsheet fake starts with the Holdings tab alone");
   state.fetchHandler = OFFLINE ? offlineFetch : liveFetch;
   const logStart = state.log.length;
-  context.refreshConcentration();
+  const runOne = timedRun();
   check(state.fetchCalls.length === 1 && liveRequests + offlineRequests === 1, "run 1 sends one request");
   check(state.lockTaken === 1 && state.lockReleased === 1, "run 1 takes the lock and releases it");
 
@@ -1453,7 +1602,7 @@ function main() {
 
   const afterFetch = state.log.slice(fetchAt + 1);
   check(
-    afterFetch.every((e) => e.sheet === EXPOSURE_TAB),
+    afterFetch.every((e) => e.sheet === EXPOSURE_TAB || e.op === "flush"),
     "after the request, run 1 changes the Concentration.Exposure tab alone",
   );
   check(
@@ -1461,8 +1610,22 @@ function main() {
     "the script asks for the Holdings tab and the two report tabs alone",
   );
   check(
-    writesSince(fetchAt) === 2,
-    `after the request, run 1 makes 1 setValues call for the data and 1 for the status (${writesSince(fetchAt)})`,
+    writesSince(fetchAt) === 3,
+    "after the request, run 1 makes 1 setValues call for the data, 1 for the status, and 1 for the run time " +
+      `(${writesSince(fetchAt)})`,
+  );
+  const writeRanges = afterFetch
+    .filter((e) => e.op === "setValues")
+    .map((e) => `${e.row},${e.column},${e.rows},${e.columns}`);
+  const flushAt = afterFetch.findIndex((e) => e.op === "flush");
+  const setAt = afterFetch.map((e, n) => (e.op === "setValues" ? n : -1)).filter((n) => n >= 0);
+  check(
+    writeRanges[1] === "1,2,2,1" && writeRanges[2] === "15,1,10,2",
+    `the status write B1:B2 comes before the run-time write A15:B24 (${writeRanges.slice(1).join("; ")})`,
+  );
+  check(
+    flushAt > setAt[1] && flushAt < setAt[2] && afterFetch.filter((e) => e.op === "flush").length === 1,
+    "run 1 calls SpreadsheetApp.flush once, after the status write and before the run-time write",
   );
   const dataWrite = afterFetch.find((e) => e.op === "setValues");
   check(
@@ -1493,6 +1656,11 @@ function main() {
   check(plan?.class === "unknown", `the plan fund line has the class unknown (${plan?.class})`);
   const money = lines.find((l) => l.sources && MONEY in l.sources);
   check(money?.class === "fund", `the money market fund line has the class fund (${money?.class})`);
+
+  console.log("\n== Run time of run 1");
+  checkRecorded("run 1", runOne);
+  check(x.cell("A14") === "runStart" && x.cell("B14") === "seconds", "the header of the run-time block stays");
+  console.log(`  A15: ${new Date(runRows()[0][0]).toISOString()}; B15: ${runRows()[0][1]} seconds`);
 
   console.log("\nGrid of Concentration.Exposure after run 1:", `${x.getMaxRows()} rows, ${x.getMaxColumns()} columns.`);
   console.log("\nFunds block, D5:M:");
@@ -1528,8 +1696,10 @@ function main() {
   const at = (row, column) => x.block(row, column, 1, 1)[0][0];
   let logFrom = state.log.length;
   state.fetchHandler = () => fakeResponse(200, JSON.stringify(big));
-  context.refreshConcentration();
+  pause(2);
+  const runTwo = timedRun();
   check(state.fetchCalls.length === 2, "run 2 calls the fake once");
+  checkRecorded("run 2", runTwo);
   checkNoTabChange(reportState, logFrom, "run 2");
   check(x.cell("B1") === "OK", `B1 is OK (B1 holds "${x.cell("B1")}")`);
   const exposureColumns = accepted[EXPOSURE_TAB].grid[0].length;
@@ -1550,8 +1720,10 @@ function main() {
   replaceHoldings(HOLDINGS_ROWS);
   logFrom = state.log.length;
   state.fetchHandler = () => fakeResponse(200, liveText);
-  context.refreshConcentration();
+  pause(2);
+  const runThree = timedRun();
   checkNoTabChange(reportState, logFrom, "run 3");
+  checkRecorded("run 3", runThree);
   check(x.getMaxRows() === bigRows && x.getMaxColumns() === exposureColumns, "the grid does not shrink");
   check(lineFaults() === 0, "the lines and the sources of run 1 are back");
   check(
@@ -1586,6 +1758,7 @@ function main() {
   check(x.cell("B1") === "FAULT: 429 rate_limited", `B1 is FAULT: 429 rate_limited (B1 holds "${x.cell("B1")}")`);
   check(isDate(x.cell("B2")) && x.cell("B2").getTime() > thirdTime, "B2 holds a later time");
   checkKept(before, "run 4");
+  checkNoRecord("run 4");
   checkNoTabChange(reportState, logFrom, "run 4");
   console.log(`  B1: ${x.cell("B1")}`);
 
@@ -1607,6 +1780,7 @@ function main() {
   );
   check(x.cell("B2").getTime() > fourthTime, "B2 holds a later time");
   checkKept(before, "run 5");
+  checkNoRecord("run 5");
   checkNoTabChange(reportState, logFrom, "run 5");
   console.log(`  B1: ${x.cell("B1")}`);
 
@@ -1620,6 +1794,7 @@ function main() {
   check(state.fetchCalls.length === 4, "run 6 calls no fetch");
   check(state.log.length === logSix, "run 6 changes no cell");
   check(JSON.stringify(x.snapshot()) === JSON.stringify(before), "run 6 leaves each cell, B1 and B2 too");
+  checkNoRecord("run 6");
   state.lockHeldByOther = false;
   console.log(`  B1: ${x.cell("B1")}`);
 
@@ -1632,8 +1807,73 @@ function main() {
   check(state.fetchCalls.length === 4, "run 7 calls no fetch");
   check(x.cell("B1") === "FAULT: too many positions", `B1 is FAULT: too many positions (B1 holds "${x.cell("B1")}")`);
   checkKept(before, "run 7");
+  checkNoRecord("run 7");
   checkNoTabChange(reportState, logFrom, "run 7");
   console.log(`  B1: ${x.cell("B1")}`);
+
+  console.log("\n== Run 8: eight good runs, so eleven good runs in all");
+  replaceHoldings(HOLDINGS_ROWS);
+  state.fetchHandler = () => fakeResponse(200, liveText);
+  const firstStart = runStarts.at(-1);
+  for (let n = 4; n <= 11; n += 1) {
+    pause(2);
+    const times = timedRun();
+    check(x.cell("B1") === "OK", `good run ${n}: B1 is OK`);
+    checkRecorded(`good run ${n}`, times);
+  }
+  check(runStarts.length === 11, "the harness counted eleven good runs");
+  const rowsNow = runRows();
+  check(
+    rowsNow.every(([start]) => start !== firstStart) && rowsNow.at(-1)[0] === runStarts[9],
+    "the eleventh good run keeps 10 rows and drops the run of run 1, the oldest",
+  );
+  table(
+    ["row", "runStart", "seconds"],
+    rowsNow.map(([start, seconds], n) => [`${15 + n}`, new Date(start).toISOString(), seconds]),
+  );
+
+  console.log("\n== Run-time formulas B8 and B9 of the report");
+  const lastFormula = report.cell("B8");
+  const averageFormula = report.cell("B9");
+  check(
+    report.cell("A8") === "Last run time" && report.cell("A9") === "Average (last 10)",
+    "A8 and A9 hold the labels of the run time",
+  );
+  const known = (seconds) => {
+    const sheet = new FakeSheet(EXPOSURE_TAB, 30, 4, []);
+    sheet.grid[13][0] = "runStart";
+    sheet.grid[13][1] = "seconds";
+    seconds.forEach((value, n) => {
+      sheet.grid[14 + n][0] = new Date(Date.UTC(2026, 0, 10 - n));
+      sheet.grid[14 + n][1] = value;
+    });
+    return sheet;
+  };
+  const cases = [
+    { name: "no recorded run", seconds: [], last: "", average: "" },
+    { name: "one run", seconds: [4.2], last: 4.2, average: 4.2 },
+    { name: "three runs", seconds: [3, 1.5, 6], last: 3, average: 3.5 },
+    { name: "ten runs", seconds: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1], last: 10, average: 5.5 },
+  ];
+  const formulaRows = [];
+  for (const c of cases) {
+    const sheet = known(c.seconds);
+    const last = calculate(lastFormula, sheet);
+    const average = calculate(averageFormula, sheet);
+    check(c.last === "" ? last === "" : near(last, c.last), `${c.name}: B8 is ${JSON.stringify(c.last)} (${last})`);
+    check(
+      c.average === "" ? average === "" : near(average, c.average),
+      `${c.name}: B9 is ${JSON.stringify(c.average)} (${average})`,
+    );
+    formulaRows.push([c.name, c.seconds.join(", ") || "(none)", JSON.stringify(last), JSON.stringify(average)]);
+  }
+  const recorded = runRows().map(([, seconds]) => seconds);
+  check(near(calculate(lastFormula, x), recorded[0]), "B8 gives B15 of the Exposure tab after eleven good runs");
+  check(
+    near(calculate(averageFormula, x), recorded.reduce((a, b) => a + b, 0) / 10),
+    "B9 gives the average of the 10 kept runs of the Exposure tab",
+  );
+  table(["block", "seconds, newest first", "B8", "B9"], formulaRows);
 
   const keyCells = book.sheets.flatMap((sheet) =>
     sheet.grid.flatMap((cells) => cells.filter((v) => typeof v === "string" && v.includes(API_KEY))),

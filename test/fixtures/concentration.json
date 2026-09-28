@@ -1,6 +1,6 @@
 {
   "tab": "Concentration",
-  "note": "The concentration report. It reads the hidden tab Concentration.Exposure and the Holdings tab. Every cell is a label, a formula, or the threshold cell B15. The stock table and the block of the lines that are not individual stocks are one spill from A18.",
+  "note": "The concentration report. It reads the hidden tab Concentration.Exposure and the Holdings tab. Every cell is a label, a formula, or the threshold cell B15. B8 and B9 read the run-time block A15:B24 of Concentration.Exposure. The stock table and the block of the lines that are not individual stocks are one spill from A18.",
   "cells": [
     {
       "range": "A1",
@@ -24,6 +24,16 @@
         [
           "Sum check",
           "=IF(ISNUMBER('Concentration.Exposure'!B12),IF(ABS('Concentration.Exposure'!B12)<=0.005,\"pass\",\"fail\"),\"fail\")"
+        ]
+      ]
+    },
+    {
+      "range": "A8:B9",
+      "values": [
+        ["Last run time", "=IF(ISNUMBER('Concentration.Exposure'!B15),'Concentration.Exposure'!B15,\"\")"],
+        [
+          "Average (last 10)",
+          "=IF(COUNT('Concentration.Exposure'!B15:B24)=0,\"\",AVERAGE('Concentration.Exposure'!B15:B24))"
         ]
       ]
     },
@@ -136,6 +146,10 @@
         "numberFormat": "0.00%"
       },
       {
+        "range": "B8:B9",
+        "numberFormat": "0.0\" s\""
+      },
+      {
         "range": "A10:F10",
         "bold": true,
         "background": "#f7f6f1",
@@ -211,7 +225,7 @@
         "wrap": true
       },
       {
-        "range": "B2:B7",
+        "range": "B2:B9",
         "align": "RIGHT"
       },
       {

@@ -3,10 +3,10 @@
  * that create a tab from its layout.
  *
  * The tab Concentration.Exposure is hidden. It holds the answer of the
- * concentration route, and concentration.gs writes that answer. The tab
- * Concentration is the report. Each of its cells is a label, a formula, or
- * the threshold cell B15. The formulas read Concentration.Exposure and the
- * Holdings tab.
+ * concentration route and the run times of the 10 newest good refreshes.
+ * concentration.gs writes both. The tab Concentration is the report. Each of
+ * its cells is a label, a formula, or the threshold cell B15. The formulas
+ * read Concentration.Exposure and the Holdings tab.
  *
  * A refresh calls ensureTabs before the request. The function creates each
  * tab that is absent, and it leaves a tab that exists as it is. Delete a tab
@@ -42,6 +42,20 @@ IF(ISNA(c),"No Holdings column Value",SUM(INDIRECT("Holdings!C"&c,FALSE))))`;
 const FUNDS_FORMULA = `=LET(r,IFNA(FILTER('Concentration.Exposure'!$D$5:$J,'Concentration.Exposure'!$D$5:$D<>""),""),
 IF(INDEX(r,1,1)="","No fund looked through.",
 HSTACK(CHOOSECOLS(r,1,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6)))))`;
+
+/**
+ * The formula of B8: the seconds of the newest run in A15:B24 of the tab
+ * Concentration.Exposure. B8 is empty when no run is recorded.
+ */
+const RUN_LAST_FORMULA = `=IF(ISNUMBER('Concentration.Exposure'!B15),'Concentration.Exposure'!B15,"")`;
+
+/**
+ * The formula of B9: the average seconds of the runs in A15:B24 of the tab
+ * Concentration.Exposure. The block keeps 10 runs at most, so the average
+ * uses each recorded run when fewer than 10 exist. B9 is empty when no run is
+ * recorded.
+ */
+const RUN_AVERAGE_FORMULA = `=IF(COUNT('Concentration.Exposure'!B15:B24)=0,"",AVERAGE('Concentration.Exposure'!B15:B24))`;
 
 /**
  * The column letters of the sources block of the tab Concentration.Exposure.
@@ -149,8 +163,10 @@ IFNA(VSTACK(top,rest,"",
 
 /**
  * The layout of the tab Concentration.Exposure. The cells hold the labels
- * alone. The refresh writes the status, the time, and the answer. The grid
- * holds the source column of each position up to MAX_POSITIONS.
+ * alone. The refresh writes the status, the time, and the answer. A good
+ * refresh also writes its start time and its seconds into the run-time block
+ * A15:B24, newest first. The grid holds the source column of each position up
+ * to MAX_POSITIONS.
  */
 function exposureLayout() {
   const { first, last } = sourceColumns();
@@ -196,9 +212,13 @@ function exposureLayout() {
         ],
       },
       { range: "O4:T4", values: [["key", "name", "ticker", "lei", "class", "weight"]] },
+      { range: "A14:B14", values: [["runStart", "seconds"]] },
     ],
     styles: [
       { range: `A4:${last}4`, bold: true, background: "#f7f6f1" },
+      { range: "A14:B14", bold: true, background: "#f7f6f1" },
+      { range: "A15:A24", numberFormat: "yyyy-mm-dd hh:mm:ss" },
+      { range: "B15:B24", numberFormat: "0.000" },
       { range: "B2", numberFormat: "yyyy-mm-dd hh:mm:ss" },
       { range: "B5", numberFormat: "#,##0" },
       { range: "B6", numberFormat: "0.000000" },
@@ -218,7 +238,8 @@ function exposureLayout() {
 
 /**
  * The layout of the tab Concentration. B15 holds the threshold, 1% by
- * default. A person can change it.
+ * default. A person can change it. B8 and B9 show the seconds of the last
+ * good refresh and the average of the recorded refreshes.
  */
 function reportLayout() {
   return {
@@ -243,6 +264,13 @@ function reportLayout() {
             "Sum check",
             `=IF(ISNUMBER('Concentration.Exposure'!B12),IF(ABS('Concentration.Exposure'!B12)<=0.005,"pass","fail"),"fail")`,
           ],
+        ],
+      },
+      {
+        range: "A8:B9",
+        values: [
+          ["Last run time", RUN_LAST_FORMULA],
+          ["Average (last 10)", RUN_AVERAGE_FORMULA],
         ],
       },
       { range: "D2:H2", values: [["Fund looked through", "Report date", "Holdings", "Weight", "Covered"]] },
@@ -289,6 +317,7 @@ function reportLayout() {
       { range: "B3", numberFormat: "yyyy-mm-dd hh:mm" },
       { range: "B4", numberFormat: "$#,##0", bold: true },
       { range: "B5:B6", numberFormat: "0.00%" },
+      { range: "B8:B9", numberFormat: '0.0" s"' },
       { range: "A10:F10", bold: true, background: "#f7f6f1", color: "#1d1c1a" },
       { range: "B11", numberFormat: "0.00%" },
       { range: "B12", numberFormat: "#,##0" },
@@ -306,7 +335,7 @@ function reportLayout() {
       { range: "E18:E", numberFormat: "0.00%" },
       { range: "G18:K", numberFormat: '0.00%;-0.00%;""' },
       { range: "F18:F", wrap: true },
-      { range: "B2:B7", align: "right" },
+      { range: "B2:B9", align: "right" },
       { range: "D2:H2", bold: true, background: "#f7f6f1" },
       { range: "D3:D9", bold: true },
       { range: "E3:E9", numberFormat: "yyyy-mm-dd" },

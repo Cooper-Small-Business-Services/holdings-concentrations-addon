@@ -7,7 +7,8 @@
  * answer. layout.gs holds the layout of the two tabs, and the script creates
  * each of them that is absent. It reads no other tab, and it writes no other
  * tab. The menu item Refresh of the add-on menu is the one way to run it.
- * The add-on menu is under Extensions, with the name of the add-on.
+ * The add-on menu is under Extensions, with the name of the add-on. Each good
+ * refresh also records its time in the hidden tab.
  *
  * The user properties of each person hold the API key of that person. The
  * menu item Set API key writes it. The script does not use the script
@@ -134,6 +135,19 @@ const LINE_COLUMN = 15;
 const SOURCE_COLUMN = 21;
 
 /**
+ * The row of the header of the run-time block, A14:B14. The block holds one
+ * row for each good refresh from row 15: the start time in column A and the
+ * seconds in column B, newest first.
+ */
+const RUN_HEADER_ROW = 14;
+
+/**
+ * The largest count of refreshes that the run-time block keeps. The rows are
+ * A15:B24.
+ */
+const RUN_LIMIT = 10;
+
+/**
  * Add the items Refresh and Set API key to the add-on menu. The add-on menu
  * is under Extensions, with the name of the add-on. The spreadsheet runs this
  * function when a person opens it. The function reads no property and no
@@ -201,8 +215,14 @@ function refreshConcentration() {
  * step creates each tab of the report that is absent. A fault writes the
  * status cell B1 and the time cell B2 alone, so the last good answer stays in
  * the other cells.
+ *
+ * A good refresh records its time in the run-time block. The time starts at
+ * the start of this function. It ends after the write of the answer and the
+ * status. SpreadsheetApp.flush applies the pending writes before the end, so
+ * the time includes them. A fault records no time.
  */
 function runRefresh() {
+  const started = new Date();
   const book = SpreadsheetApp.getActiveSpreadsheet();
   ensureTabs(book);
   const out = book.getSheetByName(EXPOSURE_TAB);
@@ -258,6 +278,8 @@ function runRefresh() {
   const ids = positions.map((position) => position.id);
   writeAnswer(out, ids, answer);
   writeStatus(out, "OK");
+  SpreadsheetApp.flush();
+  recordRun(out, started, (Date.now() - started.getTime()) / 1000);
 }
 
 /**
@@ -425,6 +447,21 @@ function writeStatus(sheet, text) {
 }
 
 /**
+ * Put one good refresh at the top of the run-time block A15:B24 with one
+ * setValues call: the start time in column A and the seconds in column B. The
+ * rows of the earlier runs move down one row. The function keeps RUN_LIMIT
+ * rows, so the oldest row goes when the block is full. A row with no number
+ * of seconds is not a run, and the function drops it.
+ */
+function recordRun(sheet, started, seconds) {
+  const block = sheet.getRange(RUN_HEADER_ROW + 1, 1, RUN_LIMIT, 2);
+  const earlier = block.getValues().filter((row) => typeof row[1] === "number");
+  const rows = [[started, seconds], ...earlier].slice(0, RUN_LIMIT);
+  while (rows.length < RUN_LIMIT) rows.push(["", ""]);
+  block.setValues(rows);
+}
+
+/**
  * Add rows and columns at the end of the grid until the grid holds the given
  * count of rows and columns. The grid never shrinks.
  */
@@ -466,9 +503,10 @@ function placeBlock(grid, row, column, values) {
  * lines and the positions, and sets the text format. Then it writes the range
  * from B4 to the last column and the last row of the grid with one setValues
  * call. The range holds the labels of row 4, the position ids, the measures,
- * the funds, the lines, and the sources. Each other cell gets an empty
- * string, so no cell of the last answer stays. One call replaces the whole
- * answer, so a report formula never reads an empty block.
+ * the funds, the lines, and the sources. It also holds column B of the
+ * run-time block, and the function copies those cells as they are. Each other
+ * cell gets an empty string, so no cell of the last answer stays. One call
+ * replaces the whole answer, so a report formula never reads an empty block.
  */
 function writeAnswer(sheet, ids, answer) {
   const funds = fundRows(answer.funds);
@@ -478,11 +516,13 @@ function writeAnswer(sheet, ids, answer) {
     FIRST_DATA_ROW + MEASURE_NAMES.length - 1,
     HEADER_ROW + funds.length,
     HEADER_ROW + lines.length,
+    RUN_HEADER_ROW + RUN_LIMIT,
   );
   growGrid(sheet, lastRow, SOURCE_COLUMN - 1 + ids.length);
   const rows = sheet.getMaxRows() - HEADER_ROW + 1;
   const width = sheet.getMaxColumns() - 1;
   const labels = sheet.getRange(HEADER_ROW, 2, 1, width).getValues()[0];
+  const runs = sheet.getRange(RUN_HEADER_ROW, 2, RUN_LIMIT + 1, 1).getValues();
   const grid = Array.from({ length: rows }, () => new Array(width).fill(""));
   labels.slice(0, SOURCE_COLUMN - 2).forEach((value, c) => {
     grid[0][c] = value;
@@ -492,6 +532,7 @@ function writeAnswer(sheet, ids, answer) {
   placeBlock(grid, FIRST_DATA_ROW, FUND_COLUMN, funds);
   placeBlock(grid, FIRST_DATA_ROW, LINE_COLUMN, lines);
   placeBlock(grid, FIRST_DATA_ROW, SOURCE_COLUMN, sources);
+  placeBlock(grid, RUN_HEADER_ROW, 2, runs);
   setTextFormat(sheet);
   sheet.getRange(HEADER_ROW, 2, rows, width).setValues(grid);
 }
