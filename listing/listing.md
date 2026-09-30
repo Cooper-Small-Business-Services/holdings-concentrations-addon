@@ -35,9 +35,10 @@ Holdings Concentration for Tiller shows how much of your portfolio sits in each 
 Many investors own the same company several times without knowing it. An S&P 500 fund, a total market fund, and a technology fund can each hold the same large companies. This add-on reads the Holdings tab that Tiller keeps up to date in your spreadsheet. It looks inside each ETF and mutual fund that you own, and it adds up your total share of each company.
 
 WHAT YOU GET
-- A Concentration tab that lists each company at or above a threshold that you pick (1% to start). Each row shows the share of your portfolio, the value, and how much came from each fund.
-- Your top 10 weight and your effective number of holdings, two quick ways to see how concentrated your portfolio is.
-- The cash, Treasury securities, and other holdings inside your funds, in their own rows.
+- A Concentration tab that lists each company whose stock is at or above a threshold that you pick (1% to start). Each row shows the share of your portfolio, the value, and how much came from each fund. The rows count stock only, so a bond from the same company does not inflate them.
+- Measures of your stocks alone: how much of your portfolio is in stocks, how much of your stocks sits in your 10 largest companies, and your effective number of stocks.
+- A fund overlap list that shows how much of each pair of your funds sits in the same stocks, so you can spot two funds that give you the same exposure. You pick the smallest overlap to show (10% to start).
+- The cash, bonds, Treasury securities, and other holdings inside your funds, in their own rows.
 - The date of the portfolio report of each fund, so you know how current the data is.
 
 HOW TO START
