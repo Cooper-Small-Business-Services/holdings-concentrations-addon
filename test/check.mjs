@@ -12,11 +12,15 @@
  * layout of the report. The definition files in test/fixtures/ hold that
  * layout.
  *
- * The harness calculates the two run-time formulas B8 and B9 of the report
+ * The harness calculates the two run-time formulas B7 and B8 of the report
  * alone, with a small evaluator. It reads the text of each other formula. No
  * formula can hold a column letter of the Holdings tab. Each range of the
  * sources block must end at the column of position MAX_POSITIONS. Each
  * FILTER must sit in IFNA or IFERROR, or GUARDED_FILTERS must name it.
+ *
+ * The last runs put tabs of another layout version into the spreadsheet
+ * fake. They check that a refresh replaces those tabs and keeps the values
+ * that the person typed.
  *
  * Run 1 sends one real request to the concentration route with the key of the
  * environment variable HOLDINGS_API_KEY. The other runs send no request. The
@@ -140,6 +144,7 @@ const MEASURES = [
   "weightSum",
   "weightDifference",
 ];
+const EQUITY = ["weight", "lineCount", "top10Weight", "hhi", "effectiveCount"];
 const FUND_FIELDS = [
   "id",
   "ticker",
@@ -152,7 +157,38 @@ const FUND_FIELDS = [
   "mergedByLei",
   "mergedByName",
 ];
-const LINE_FIELDS = ["key", "name", "ticker", "lei", "class", "weight"];
+const LINE_FIELDS = ["key", "name", "ticker", "lei", "class", "weight", "stockWeight"];
+
+/**
+ * The first column of each block of the Concentration.Exposure tab: the
+ * funds in D, the overlaps in O, the lines in T, the part name in AA, and
+ * the sources in AB. Column 1 is A.
+ */
+const FUND_AT = 4;
+const OVERLAP_AT = 15;
+const LINE_AT = 20;
+const PART_AT = LINE_AT + LINE_FIELDS.length;
+const SOURCE_AT = PART_AT + 1;
+
+/**
+ * The first row of the equity block of the Concentration.Exposure tab.
+ */
+const EQUITY_ROW = 27;
+
+/**
+ * The cell of the Concentration.Exposure tab that holds the layout version,
+ * and the two cells of the Concentration tab that a person types in.
+ */
+const VERSION_CELL = "B3";
+const THRESHOLD_CELL = "B21";
+const MINIMUM_CELL = "B22";
+
+/**
+ * The cell of the fund header of the Concentration tab, and the cell of the
+ * report spill.
+ */
+const HEADER_CELL = "H24";
+const SPILL_CELL = "A25";
 
 /**
  * The error of a failed assertion. The message names the assertion.
@@ -273,6 +309,10 @@ class FakeSheet {
     }
     for (const row of this.grid) row.splice(start - 1, count);
     this.record("deleteColumns", { count });
+  }
+
+  getIndex() {
+    return book.sheets.indexOf(this) + 1;
   }
 
   hideSheet() {
@@ -407,6 +447,10 @@ class FakeRange {
     return this.sheet.block(this.row, this.column, this.rows, this.columns).map((cells) => [...cells]);
   }
 
+  getValue() {
+    return this.sheet.grid[this.row - 1][this.column - 1];
+  }
+
   setValues(values) {
     if (values.length !== this.rows || values.some((cells) => cells.length !== this.columns)) {
       throw new Error(`The data has ${values.length} rows, and the range has ${this.rows} rows.`);
@@ -484,6 +528,16 @@ class FakeBook {
     this.sheets.splice(index, 0, sheet);
     this.log.push({ sheet: name, op: "insertSheet", index });
     return sheet;
+  }
+
+  deleteSheet(sheet) {
+    const index = this.sheets.indexOf(sheet);
+    if (index < 0) throw new Error(`The spreadsheet holds no sheet "${sheet.name}".`);
+    if (this.sheets.filter((other) => other !== sheet && !other.hidden).length === 0) {
+      throw new Error("A spreadsheet must keep one visible sheet.");
+    }
+    this.sheets.splice(index, 1);
+    this.log.push({ sheet: sheet.name, op: "deleteSheet", index });
   }
 
   /**
@@ -738,32 +792,150 @@ function liveFetch(url, options) {
 let offlineRequests = 0;
 
 /**
+ * The invented holdings of the two index funds of the synthetic answer. Each
+ * holding has a merge key, a name, a ticker, a class, and a percent of the
+ * fund. Fund A holds stocks and cash. Fund B holds the stock and a bond of
+ * company B, a bond of company C, and a held fund with a negative percent.
+ * The percents of each fund add up to 100.
+ */
+const OFFLINE_FUNDS = {
+  [FUND_A]: [
+    { key: "name:EXAMPLE COMPANY B", name: "Example Company B", ticker: null, class: "stock", pct: 85 },
+    { key: "name:EXAMPLE COMPANY C", name: "Example Company C", ticker: null, class: "stock", pct: 5 },
+    { key: `ticker:${STOCK}`, name: "Example company", ticker: STOCK, class: "stock", pct: 5 },
+    { key: "name:CASH", name: "Cash", ticker: null, class: "cash", pct: 5 },
+  ],
+  [FUND_B]: [
+    { key: "name:EXAMPLE COMPANY B", name: "Example Company B", ticker: null, class: "stock", pct: 80 },
+    { key: "name:EXAMPLE COMPANY B", name: "Example Company B", ticker: null, class: "other", pct: 5 },
+    { key: "name:EXAMPLE COMPANY C", name: "Example Company C", ticker: null, class: "other", pct: 5 },
+    { key: `ticker:${STOCK}`, name: "Example company", ticker: STOCK, class: "stock", pct: 5 },
+    { key: "name:CASH", name: "Cash", ticker: null, class: "cash", pct: 6 },
+    { key: "name:EXAMPLE HELD FUND", name: "Example Held Fund", ticker: null, class: "fund", pct: -1 },
+  ],
+};
+
+/**
+ * The line of each direct position of the synthetic answer. The bond and the
+ * plan fund get the class unknown, and the money market fund gets the class
+ * fund, as the route gives them.
+ */
+const OFFLINE_DIRECT = {
+  [STOCK]: { key: `ticker:${STOCK}`, name: "Example company", ticker: STOCK, class: "stock" },
+  [BOND]: { key: `ticker:${BOND}`, name: BOND, ticker: BOND, class: "unknown" },
+  [MONEY]: { key: `ticker:${MONEY}`, name: "Example money market fund", ticker: MONEY, class: "fund" },
+  [PLAN_FUND]: { key: `id:${PLAN_FUND}`, name: PLAN_FUND, ticker: null, class: "unknown" },
+};
+
+/**
+ * The equity block of a list of stock weights, or null when their sum is not
+ * above 0.
+ */
+function equityOf(stockWeights) {
+  const weight = stockWeights.reduce((a, b) => a + b, 0);
+  if (!(weight > 0)) return null;
+  const shares = stockWeights.filter((w) => w !== 0).map((w) => w / weight);
+  const squares = shares.reduce((a, share) => a + share * share, 0);
+  const top = [...shares].sort((a, b) => b - a).slice(0, 10);
+  return {
+    weight,
+    lineCount: shares.length,
+    top10Weight: top.reduce((a, b) => a + b, 0),
+    hhi: squares * 10000,
+    effectiveCount: 1 / squares,
+  };
+}
+
+/**
+ * The overlaps block of a list of funds and lines: one element for each pair
+ * of funds that hold stock in one or more of the same lines, largest overlap
+ * first.
+ */
+function overlapsOf(funds, lines) {
+  const overlaps = [];
+  funds.forEach((first, i) => {
+    for (const second of funds.slice(i + 1)) {
+      let overlap = 0;
+      let sharedLineCount = 0;
+      for (const line of lines) {
+        const a = (line.stockSources[first.id] ?? 0) / first.weight;
+        const b = (line.stockSources[second.id] ?? 0) / second.weight;
+        if (a > 0 && b > 0) {
+          overlap += Math.min(a, b);
+          sharedLineCount += 1;
+        }
+      }
+      if (sharedLineCount > 0) overlaps.push({ ids: [first.id, second.id], overlap, sharedLineCount });
+    }
+  });
+  return overlaps.sort((a, b) => b.overlap - a.overlap);
+}
+
+/**
  * A synthetic answer of the route for the positions of run 1, in the shape
- * of a real answer. Each index fund holds the direct stock, one invented
- * company, and cash. The direct stock line gets a source from the stock and
- * from each index fund. The bond and the plan fund get the class unknown, and
- * the money market fund gets the class fund, as the route gives them.
+ * of a real answer of schema version 1.7. Each name and each number is
+ * invented. A position of OFFLINE_FUNDS enters through its holdings and gets
+ * a residual line. Each other position enters as one line of OFFLINE_DIRECT.
+ * Holdings with one key share one line. The line of company B holds a stock
+ * from both funds and a bond from fund B. The line of company C holds a
+ * stock from fund A and a bond from fund B.
  */
 function offlineAnswer(positions) {
-  const weight = Object.fromEntries(positions.map((p) => [p.id, p.weight]));
-  const lines = [];
-  const add = (key, name, ticker, cls, sources) => {
-    const sum = Object.values(sources).reduce((a, b) => a + b, 0);
-    lines.push({ key, name, ticker, lei: null, class: cls, weight: sum, sources });
+  const byKey = new Map();
+  const add = (holding, id, weight) => {
+    if (!byKey.has(holding.key)) {
+      const { key, name, ticker } = holding;
+      byKey.set(key, { key, name, ticker, weight: 0, sources: {}, stockWeight: 0, stockSources: {}, sizes: {} });
+    }
+    const line = byKey.get(holding.key);
+    line.weight += weight;
+    line.sources[id] = (line.sources[id] ?? 0) + weight;
+    if (holding.class === "stock") {
+      line.stockWeight += weight;
+      line.stockSources[id] = (line.stockSources[id] ?? 0) + weight;
+    }
+    line.sizes[holding.class] = (line.sizes[holding.class] ?? 0) + Math.abs(weight);
   };
-  const funds = [FUND_A, FUND_B];
-  const through = (share) => Object.fromEntries(funds.map((id) => [id, weight[id] * share]));
-  add("name:EXAMPLE COMPANY B", "Example Company B", null, "stock", through(0.9));
-  add(`ticker:${STOCK}`, "Example company", STOCK, "stock", { ...through(0.05), [STOCK]: weight[STOCK] });
-  add("name:CASH", "Cash", null, "cash", through(0.05));
-  add(`ticker:${BOND}`, BOND, BOND, "unknown", { [BOND]: weight[BOND] });
-  add(`ticker:${MONEY}`, "Example money market fund", MONEY, "fund", { [MONEY]: weight[MONEY] });
-  add(`id:${PLAN_FUND}`, PLAN_FUND, null, "unknown", { [PLAN_FUND]: weight[PLAN_FUND] });
-  lines.sort((a, b) => b.weight - a.weight);
+  const funds = [];
+  for (const { id, weight } of positions) {
+    const holdings = OFFLINE_FUNDS[id];
+    if (holdings === undefined) {
+      add(OFFLINE_DIRECT[id], id, weight);
+      continue;
+    }
+    for (const holding of holdings) add(holding, id, (weight * holding.pct) / 100);
+    const covered = holdings.reduce((a, holding) => a + holding.pct, 0) / 100;
+    const residual = { key: `residual:${id}`, name: `${id} (not looked through)`, ticker: null, class: "other" };
+    add(residual, id, weight * Math.max(0, 1 - covered));
+    funds.push({
+      id,
+      ticker: id,
+      reportDate: "2026-06-30",
+      accessionNumber: `0000000000-26-00000${funds.length + 1}`,
+      holdingCount: holdings.length,
+      weight,
+      coveredWeight: weight * covered,
+      mergedByTicker: 1,
+      mergedByLei: 0,
+      mergedByName: holdings.length - 1,
+    });
+  }
+  const lines = [...byKey.values()].map((line) => ({
+    key: line.key,
+    name: line.name,
+    ticker: line.ticker,
+    lei: null,
+    class: Object.entries(line.sizes).sort((a, b) => b[1] - a[1])[0][0],
+    weight: line.weight,
+    sources: line.sources,
+    stockWeight: line.stockWeight,
+    stockSources: line.stockSources,
+  }));
+  lines.sort((a, b) => b.weight - a.weight || (a.key < b.key ? -1 : 1));
   const weights = lines.map((line) => line.weight);
   const sum = weights.reduce((a, b) => a + b, 0);
   const squares = weights.reduce((a, w) => a + w * w, 0);
-  const lookedThrough = funds.reduce((a, id) => a + weight[id], 0);
+  const lookedThrough = funds.reduce((a, fund) => a + fund.coveredWeight, 0);
   return {
     measures: {
       lineCount: lines.length,
@@ -771,23 +943,20 @@ function offlineAnswer(positions) {
       hhi: squares * 10000,
       effectiveCount: 1 / squares,
       lookedThroughWeight: lookedThrough,
-      notLookedThroughWeight: 1 - lookedThrough,
+      notLookedThroughWeight: sum - lookedThrough,
       weightSum: sum,
       weightDifference: sum - 1,
+      equity: equityOf(lines.map((line) => line.stockWeight)),
     },
-    funds: funds.map((id, i) => ({
-      id,
-      ticker: id,
-      reportDate: "2026-06-30",
-      accessionNumber: `0000000000-26-00000${i + 1}`,
-      holdingCount: 3,
-      weight: weight[id],
-      coveredWeight: weight[id],
-      mergedByTicker: 0,
-      mergedByLei: 0,
-      mergedByName: 0,
-    })),
+    funds,
+    overlaps: overlapsOf(funds, lines),
     lines,
+    meta: {
+      schemaVersion: "1.7",
+      source: "Invented data of the offline run",
+      pctValueUnit: "percent of net assets",
+      disclaimer: "Invented data. Not investment advice.",
+    },
   };
 }
 
@@ -946,15 +1115,19 @@ function checkKept(before, name) {
 }
 
 /**
- * Check that a run after the first creates no tab, changes no part of the
- * report tab, and changes no cell of the Holdings tab.
+ * Check that a run with tabs of the current layout creates no tab, deletes
+ * no tab, changes no part of the report tab, and changes no cell of the
+ * Holdings tab. `names` holds the tabs of the spreadsheet in their order.
  */
-function checkNoTabChange(reportBefore, logFrom, name) {
+function checkNoTabChange(reportBefore, logFrom, name, names = ["Holdings", EXPOSURE_TAB, REPORT_TAB]) {
   const entries = state.log.slice(logFrom);
-  check(!entries.some((e) => e.op === "insertSheet"), `${name}: the script creates no tab`);
   check(
-    JSON.stringify(book.names()) === JSON.stringify(["Holdings", EXPOSURE_TAB, REPORT_TAB]),
-    `${name}: the spreadsheet holds the same three tabs`,
+    !entries.some((e) => e.op === "insertSheet" || e.op === "deleteSheet"),
+    `${name}: the script creates no tab and deletes no tab`,
+  );
+  check(
+    JSON.stringify(book.names()) === JSON.stringify(names),
+    `${name}: the spreadsheet holds the same three tabs in the same order`,
   );
   check(book.tab(REPORT_TAB).state() === reportBefore, `${name}: no cell and no format of the report tab changes`);
   check(
@@ -1072,14 +1245,46 @@ function indexSince(from, test) {
 }
 
 /**
- * A synthetic answer of the route for the given position ids: one fund and
- * the given count of lines. Line i has one source, the position i modulo the
- * count of ids.
+ * The rows that the script must write for the lines of an answer, by the
+ * part rule: one row for the stock part of a line, one row for its other
+ * part, or both. A row holds the fields of LINE_FIELDS, the part name, and
+ * one cell for each position id. A stock cell holds the entry of
+ * stockSources. An other cell holds the entry of sources minus the entry of
+ * stockSources. A part of 0 gives an empty cell.
+ */
+function expectedParts(lines, ids) {
+  const entry = (map, id) => (Object.hasOwn(map ?? {}, id) ? map[id] : null);
+  const rows = [];
+  for (const line of lines) {
+    const fields = LINE_FIELDS.map((name) => line[name] ?? "");
+    const stock = ids.map((id) => entry(line.stockSources, id) ?? "");
+    const other = ids.map((id) => {
+      const part = (entry(line.sources, id) ?? 0) - (entry(line.stockSources, id) ?? 0);
+      return part === 0 ? "" : part;
+    });
+    const hasStock = line.stockWeight !== 0 || stock.some((value) => value !== "");
+    if (hasStock) rows.push([...fields, "stock", ...stock]);
+    if (!hasStock || other.some((value) => value !== "")) rows.push([...fields, "other", ...other]);
+  }
+  return rows;
+}
+
+/**
+ * The sum of the numbers of a list of cells. A cell with no number adds 0.
+ */
+function sumCells(cells) {
+  return cells.reduce((sum, value) => sum + (typeof value === "number" ? value : 0), 0);
+}
+
+/**
+ * A synthetic answer of the route for the given position ids: one fund, no
+ * pair of funds, no equity block, and the given count of lines. Line i has
+ * one source, the position i modulo the count of ids, and no stock.
  */
 function bigAnswer(ids, lineCount) {
   const weight = 1 / lineCount;
   return {
-    measures: Object.fromEntries(MEASURES.map((name, i) => [name, i + 0.5])),
+    measures: { ...Object.fromEntries(MEASURES.map((name, i) => [name, i + 0.5])), equity: null },
     funds: [
       {
         id: ids[0],
@@ -1094,14 +1299,17 @@ function bigAnswer(ids, lineCount) {
         mergedByName: 0,
       },
     ],
+    overlaps: [],
     lines: Array.from({ length: lineCount }, (_, i) => ({
       key: `line:${i}`,
       name: `Line ${i}`,
       ticker: null,
       lei: null,
-      class: "stock",
+      class: "other",
       weight,
       sources: { [ids[i % ids.length]]: weight },
+      stockWeight: 0,
+      stockSources: {},
     })),
   };
 }
@@ -1119,7 +1327,7 @@ const GUARDED_FILTERS = {
   },
   keep: {
     guards: ["main,IF(nown=0,FILTER(grpAll,big),", "nis,IF(nown+ng=0,"],
-    reason: "main uses ownRows only when nown, the count of the direct lines, is above 0",
+    reason: "main uses ownRows only when nown, the count of the rows of their own, is above 0",
   },
   grp: {
     guards: ["ng,IF(SUM(grp)=0,0,SUM(big)),", "nsm,IF(SUM(grp)=0,0,SUM(sm)),"],
@@ -1136,6 +1344,10 @@ const GUARDED_FILTERS = {
   sm: {
     guards: ["nsm,IF(SUM(grp)=0,0,SUM(sm)),", "nis,IF(nown+ng=0,IF(nsm=0,", "IF(nsm=0,SORT(main,4,FALSE),"],
     reason: "nis uses smallRow only when nsm, the count of the small groups, is above 0",
+  },
+  psel: {
+    guards: ["plist,IF(SUM(psel)=0,"],
+    reason: "plist uses the pair rows only when a pair is at or above the overlap minimum",
   },
 };
 
@@ -1236,7 +1448,7 @@ function main() {
     }
     vm.runInContext(source, context, { filename: file });
   }
-  for (const name of ["onOpen", "onInstall", "setApiKey", "refreshConcentration", "ensureTabs"]) {
+  for (const name of ["onOpen", "onInstall", "setApiKey", "refreshConcentration", "ensureTabs", "readInputs"]) {
     check(typeof context[name] === "function", `the script defines ${name}`);
   }
   const accepted = {
@@ -1334,6 +1546,70 @@ function main() {
   context.growGrid(small, 3, 5);
   context.growGrid(small, 1, 1);
   check(small.getMaxRows() === 3 && small.getMaxColumns() === 5, "growGrid adds rows and columns and never shrinks");
+
+  const handLines = [
+    {
+      key: "name:BOTH",
+      class: "stock",
+      weight: 0.5,
+      sources: { A: 0.25, B: 0.25 },
+      stockWeight: 0.375,
+      stockSources: { A: 0.25, B: 0.125 },
+    },
+    { key: "name:BOND", class: "other", weight: 0.125, sources: { A: 0.125 }, stockWeight: 0, stockSources: {} },
+    {
+      key: "name:STOCK",
+      class: "stock",
+      weight: 0.0625,
+      sources: { B: 0.0625 },
+      stockWeight: 0.0625,
+      stockSources: { B: 0.0625 },
+    },
+    { key: "residual:A", class: "other", weight: 0, sources: { A: 0 }, stockWeight: 0, stockSources: {} },
+    {
+      key: "name:SHORT",
+      class: "stock",
+      weight: 0,
+      sources: { A: 0.5, B: -0.5 },
+      stockWeight: 0,
+      stockSources: { A: 0.5, B: -0.5 },
+    },
+  ];
+  const handRows = context
+    .partRows(handLines, ["A", "B"])
+    .map((cells) => [cells[0], ...cells.slice(LINE_FIELDS.length)]);
+  check(
+    JSON.stringify(handRows) ===
+      JSON.stringify([
+        ["name:BOTH", "stock", 0.25, 0.125],
+        ["name:BOTH", "other", "", 0.125],
+        ["name:BOND", "other", 0.125, ""],
+        ["name:STOCK", "stock", "", 0.0625],
+        ["residual:A", "other", "", ""],
+        ["name:SHORT", "stock", 0.5, -0.5],
+      ]),
+    `partRows gives the stock part and the other part of each source (${JSON.stringify(handRows)})`,
+  );
+
+  const defaults = JSON.stringify({ threshold: 0.01, overlapMinimum: 0.1 });
+  const typed = new FakeSheet("typed", 30, 3, []);
+  check(JSON.stringify(context.readInputs(null)) === defaults, "readInputs gives the defaults for an absent tab");
+  check(
+    JSON.stringify(context.readInputs(typed)) === defaults,
+    "readInputs gives the defaults for a tab with no label",
+  );
+  typed.grid[4] = ["Threshold", 1.5, ""];
+  typed.grid[5] = [" Overlap minimum ", "10%", ""];
+  check(
+    JSON.stringify(context.readInputs(typed)) === defaults,
+    "readInputs gives the default for a number above 1 and for a text",
+  );
+  typed.grid[4][1] = 0;
+  typed.grid[5][1] = 1;
+  check(
+    JSON.stringify(context.readInputs(typed)) === JSON.stringify({ threshold: 0, overlapMinimum: 1 }),
+    "readInputs reads 0 and 1 from the cells next to the two labels",
+  );
   console.log("  pass");
 
   console.log("\n== onOpen and onInstall");
@@ -1412,8 +1688,17 @@ function main() {
   const created = Object.fromEntries(snap.tabs);
   for (const tab of [EXPOSURE_TAB, REPORT_TAB]) checkLayout(tab, created[tab], accepted[tab]);
   const report = book.tab(REPORT_TAB);
-  check(report.cell("B15") === 0.01, "the threshold cell B15 holds its default 0.01");
-  check(report.cell("A18").startsWith("=LET(") && report.cell("A18").includes("\n"), "A18 holds the report formula");
+  const layoutVersion = vm.runInContext("LAYOUT_VERSION", context);
+  check(
+    Number.isInteger(layoutVersion) && JSON.parse(created[EXPOSURE_TAB]).grid[2][1] === layoutVersion,
+    `${VERSION_CELL} of the hidden tab holds the layout version of layout.gs (${layoutVersion})`,
+  );
+  check(report.cell(THRESHOLD_CELL) === 0.01, `the threshold cell ${THRESHOLD_CELL} holds its default 0.01`);
+  check(report.cell(MINIMUM_CELL) === 0.1, `the overlap minimum cell ${MINIMUM_CELL} holds its default 0.1`);
+  check(
+    report.cell(SPILL_CELL).startsWith("=LET(") && report.cell(SPILL_CELL).includes("\n"),
+    `${SPILL_CELL} holds the report formula`,
+  );
 
   console.log("\n== Report formulas");
   const formulas = [EXPOSURE_TAB, REPORT_TAB].flatMap((tab) =>
@@ -1436,16 +1721,17 @@ function main() {
   );
   check(
     holdingsColumns.every(
-      (name) => report.cell("B4").includes(`"${name}"`) || report.cell("A18").includes(`"${name}"`),
+      (name) => report.cell("B4").includes(`"${name}"`) || report.cell(SPILL_CELL).includes(`"${name}"`),
     ),
-    `B4 and A18 find each column of findColumns by its header text (${holdingsColumns.join(", ")})`,
+    `B4 and ${SPILL_CELL} find each column of findColumns by its header text (${holdingsColumns.join(", ")})`,
   );
   check(report.cell("B4").includes('"No Holdings column Value"'), "B4 shows a text when no Value column exists");
 
   const lastSource = vm.runInContext("SOURCE_COLUMN + MAX_POSITIONS - 1", context);
   const firstSource = vm.runInContext("SOURCE_COLUMN", context);
+  check(firstSource === SOURCE_AT, `the sources block starts at column ${SOURCE_AT}`);
   const exposureRange = /'Concentration\.Exposure'!\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d*)/g;
-  for (const cell of ["H17", "A18"]) {
+  for (const cell of [HEADER_CELL, SPILL_CELL]) {
     const sourceRanges = [...report.cell(cell).matchAll(exposureRange)].filter(
       (m) => columnNumber(m[1]) === firstSource,
     );
@@ -1467,6 +1753,23 @@ function main() {
     exposureStyles.get(cellKey(4, lastSource))?.fontWeight === "bold" &&
       exposureStyles.get(cellKey(5, lastSource))?.numberFormat === "0.00000",
     `the header format and the number format of the sources block reach column ${lastSource}`,
+  );
+
+  const reportFormulas = formulas.filter((f) => f.at.startsWith(`${REPORT_TAB} `));
+  const allLines = reportFormulas.filter((f) => /'Concentration\.Exposure'!\$?B\$?[678]\b/.test(f.value));
+  check(
+    allLines.length === 0,
+    `no formula reads the top 10 weight, the HHI, or the effective count of all the lines (${allLines.map((f) => f.at).join(", ")})`,
+  );
+  const reportCells = JSON.parse(created[REPORT_TAB]).grid.flat();
+  check(
+    !reportCells.includes("Sum check") && reportFormulas.every((f) => !/"pass"|"fail"/.test(f.value)),
+    "the report holds no Sum check cell and no pass or fail text",
+  );
+  check(
+    reportCells.every((value) => typeof value !== "string" || !value.includes("fund inside funds")) &&
+      report.cell(SPILL_CELL).includes('"fund","Funds held by your funds, not looked through"'),
+    "the class fund has a label of its own, so no row shows the text fund inside funds",
   );
 
   const filterRows = [];
@@ -1544,19 +1847,50 @@ function main() {
   const measures = x.block(5, 2, 8, 1).map((cells) => cells[0]);
   MEASURES.forEach((name, i) => check(measures[i] === answer.measures[name], `B${5 + i} holds ${name}`));
 
+  /**
+   * The values that B27:B31 must hold for an equity block. A null block
+   * gives five empty cells.
+   */
+  const equityWant = (equity) => EQUITY.map((name) => equity?.[name] ?? "");
+  const equityCells = (sheet) => sheet.block(EQUITY_ROW, 2, EQUITY.length, 1).map((cells) => cells[0]);
+  check(
+    JSON.stringify(equityCells(x)) === JSON.stringify(equityWant(answer.measures.equity)),
+    `B${EQUITY_ROW}:B${EQUITY_ROW + EQUITY.length - 1} holds the equity measures, in the order ${EQUITY.join(", ")}`,
+  );
+
   const funds = answer.funds;
-  const fundCells = x.block(5, 4, funds.length, 10);
+  const fundCells = x.block(5, FUND_AT, funds.length, 10);
   funds.forEach((fund, i) => {
     FUND_FIELDS.forEach((name, c) => {
       check(fundCells[i][c] === (fund[name] ?? ""), `D${5 + i}:M holds ${name} of fund ${i}`);
     });
   });
 
+  const pairs = answer.overlaps;
+  /**
+   * The count of cells of the overlaps block that differ from the answer.
+   */
+  const pairFaults = (sheet) => {
+    const now = sheet.block(5, OVERLAP_AT, pairs.length, 4);
+    return pairs.filter((pair, i) => {
+      const want = [pair.ids[0], pair.ids[1], pair.overlap, pair.sharedLineCount];
+      return want.some((value, c) => now[i][c] !== value);
+    }).length;
+  };
+  check(
+    pairFaults(x) === 0,
+    `O5:R holds the two ids, overlap, and sharedLineCount of each of the ${pairs.length} pairs`,
+  );
+  check(
+    x.block(5 + pairs.length, OVERLAP_AT, x.getMaxRows() - 4 - pairs.length, 4).every((c) => c.every((v) => v === "")),
+    "the rows under the last pair are empty",
+  );
+
   const ids = sent.map((p) => p.id);
-  const idCells = x.block(4, 21, 1, x.getMaxColumns() - 20)[0];
+  const idCells = x.block(4, SOURCE_AT, 1, x.getMaxColumns() - SOURCE_AT + 1)[0];
   check(
     ids.every((id, i) => idCells[i] === id),
-    "U4 onward holds the ids in the body order",
+    "AB4 onward holds the ids in the body order",
   );
   check(
     idCells.slice(ids.length).every((v) => v === ""),
@@ -1564,34 +1898,61 @@ function main() {
   );
 
   const lines = answer.lines;
-  const lineCells = x.block(5, 15, lines.length, 6);
-  const sourceCells = x.block(5, 21, lines.length, ids.length);
+  const parts = expectedParts(lines, ids);
+  const partWidth = LINE_FIELDS.length + 1 + ids.length;
   /**
    * The count of cells of the lines block and of the sources block that
-   * differ from the live answer.
+   * differ from the part rows of the answer.
    */
-  const lineFaults = () => {
+  const partFaults = (sheet) => {
     let faults = 0;
-    const lineNow = x.block(5, 15, lines.length, 6);
-    const sourceNow = x.block(5, 21, lines.length, ids.length);
-    lines.forEach((line, i) => {
-      LINE_FIELDS.forEach((name, c) => {
-        if (lineNow[i][c] !== (line[name] ?? "")) faults += 1;
-      });
-      ids.forEach((id, c) => {
-        const want = id in (line.sources ?? {}) ? (line.sources[id] ?? "") : "";
-        if (sourceNow[i][c] !== want) faults += 1;
+    const now = sheet.block(5, LINE_AT, parts.length, partWidth);
+    parts.forEach((cells, r) => {
+      cells.forEach((value, c) => {
+        if (now[r]?.[c] !== value) faults += 1;
       });
     });
     return faults;
   };
-  check(lineFaults() === 0, "O5:T and the sources from U5 hold each line in the answer order");
+  check(
+    partFaults(x) === 0,
+    `T5:AA and the sources from AB5 hold the ${parts.length} part rows of the ${lines.length} lines, in the answer order`,
+  );
   check(
     x
-      .block(5 + lines.length, 15, x.getMaxRows() - 4 - lines.length, 6 + ids.length)
+      .block(5 + parts.length, LINE_AT, x.getMaxRows() - 4 - parts.length, partWidth)
       .every((c) => c.every((v) => v === "")),
-    "the rows under the last line are empty",
+    "the rows under the last part row are empty",
   );
+  const partCells = x.block(5, LINE_AT, parts.length, partWidth);
+  const stockIndex = LINE_FIELDS.indexOf("stockWeight");
+  const weightIndex = LINE_FIELDS.indexOf("weight");
+  const partIndex = LINE_FIELDS.length;
+  const stockRows = partCells.filter((cells) => cells[partIndex] === "stock");
+  const otherRows = partCells.filter((cells) => cells[partIndex] === "other");
+  check(stockRows.length + otherRows.length === partCells.length, "column AA of each row holds stock or other");
+  check(
+    stockRows.every((cells) => Math.abs(sumCells(cells.slice(partIndex + 1)) - cells[stockIndex]) < 1e-9),
+    "the source cells of each stock row add up to the stock weight of its line",
+  );
+  check(
+    otherRows.every(
+      (cells) => Math.abs(sumCells(cells.slice(partIndex + 1)) - (cells[weightIndex] - cells[stockIndex])) < 1e-9,
+    ),
+    "the source cells of each other row add up to the weight minus the stock weight of its line",
+  );
+  const stockSum = sumCells(stockRows.map((cells) => cells[stockIndex]));
+  const otherSum = otherRows.reduce((sum, cells) => sum + cells[weightIndex] - cells[stockIndex], 0);
+  check(
+    Math.abs(stockSum + otherSum - answer.measures.weightSum) < 1e-9,
+    `the stock rows and the other rows add up to weightSum (${stockSum + otherSum} for ${answer.measures.weightSum})`,
+  );
+  if (answer.measures.equity !== null) {
+    check(
+      Math.abs(stockSum - answer.measures.equity.weight) < 1e-9,
+      `the stock weights of the stock rows add up to equity.weight (${stockSum} for ${answer.measures.equity.weight})`,
+    );
+  }
   const lostLabels = [];
   accepted[EXPOSURE_TAB].grid.forEach((row, r) => {
     row.forEach((value, c) => {
@@ -1639,8 +2000,14 @@ function main() {
     .filter((e) => e.op === "setNumberFormat" && e.value === "@")
     .map((e) => `${e.row},${e.column},${e.columns}`);
   check(
-    ["5,4,2", "5,7,1", "5,15,4", `4,21,${x.getMaxColumns() - 20}`].every((r) => textRanges.includes(r)),
-    "the script sets the text format on D:E, G, O:R, and row 4 from U",
+    [
+      `5,${FUND_AT},2`,
+      `5,${FUND_AT + 3},1`,
+      `5,${OVERLAP_AT},2`,
+      `5,${LINE_AT},4`,
+      `4,${SOURCE_AT},${x.getMaxColumns() - SOURCE_AT + 1}`,
+    ].every((r) => textRanges.includes(r)),
+    "the script sets the text format on D:E, G, O:P, T:W, and row 4 from AB",
   );
   const firstFormat = afterFetch.findIndex((e) => e.op === "setNumberFormat");
   const firstWrite = afterFetch.findIndex((e) => e.op === "setValues");
@@ -1662,43 +2029,50 @@ function main() {
   check(x.cell("A14") === "runStart" && x.cell("B14") === "seconds", "the header of the run-time block stays");
   console.log(`  A15: ${new Date(runRows()[0][0]).toISOString()}; B15: ${runRows()[0][1]} seconds`);
 
+  const partHeader = [...LINE_FIELDS, "part", ...ids.map((id) => id.slice(0, 12))];
   console.log("\nGrid of Concentration.Exposure after run 1:", `${x.getMaxRows()} rows, ${x.getMaxColumns()} columns.`);
+  console.log(`The answer holds ${lines.length} lines, and the tab holds ${parts.length} part rows.`);
   console.log("\nFunds block, D5:M:");
   table(FUND_FIELDS, fundCells);
-  console.log("\nFirst 10 lines, O5:T and the sources from U5:");
-  table(
-    [...LINE_FIELDS, ...ids.map((id) => id.slice(0, 12))],
-    [...lineCells.slice(0, 10).map((cells, i) => [...cells, ...sourceCells[i]])],
+  console.log("\nOverlaps block, O5:R:");
+  table(["firstId", "secondId", "overlap", "sharedLineCount"], x.block(5, OVERLAP_AT, pairs.length, 4));
+  console.log("\nFirst 10 part rows, T5:AA and the sources from AB5:");
+  table(partHeader, partCells.slice(0, 10));
+  console.log("\nPart rows of the lines of the direct positions:");
+  const directKeys = new Set(
+    lines.filter((l) => [STOCK, BOND, MONEY, PLAN_FUND].some((id) => l.sources && id in l.sources)).map((l) => l.key),
   );
-  console.log("\nLines of the direct positions:");
   table(
-    [...LINE_FIELDS, ...ids.map((id) => id.slice(0, 12))],
-    lines
-      .map((line, i) => ({ line, i }))
-      .filter(({ line }) => [STOCK, BOND, MONEY, PLAN_FUND].some((id) => line.sources && id in line.sources))
-      .map(({ i }) => [...lineCells[i], ...sourceCells[i]]),
+    partHeader,
+    partCells.filter((cells) => directKeys.has(cells[0])),
   );
   console.log("\nMeasures, B5:B12:");
   table(
     ["measure", "value"],
     MEASURES.map((name, i) => [name, measures[i]]),
   );
+  console.log("\nEquity measures, B27:B31:");
+  table(
+    ["equity", "value"],
+    EQUITY.map((name, i) => [name, equityCells(x)[i]]),
+  );
 
   const reportState = report.state();
 
   const bigLines = x.getMaxRows() - 4 + 200;
   const bigRows = bigLines + 4;
-  console.log(`\n== Run 2: status 200 with 40 positions and ${bigLines} lines`);
+  console.log(`\n== Run 2: status 200 with 40 positions, ${bigLines} lines, no pair, and no equity block`);
   const forty = Array.from({ length: 40 }, (_, i) => [`T${String(i).padStart(3, "0")}`, "Example brokerage", 1, "A"]);
   replaceHoldings(forty);
   const fortyIds = forty.map((row) => row[0]);
   const big = bigAnswer(fortyIds, bigLines);
   const at = (row, column) => x.block(row, column, 1, 1)[0][0];
   let logFrom = state.log.length;
+  let fetches = state.fetchCalls.length;
   state.fetchHandler = () => fakeResponse(200, JSON.stringify(big));
   pause(2);
   const runTwo = timedRun();
-  check(state.fetchCalls.length === 2, "run 2 calls the fake once");
+  check(state.fetchCalls.length === fetches + 1, "run 2 calls the fake once");
   checkRecorded("run 2", runTwo);
   checkNoTabChange(reportState, logFrom, "run 2");
   check(x.cell("B1") === "OK", `B1 is OK (B1 holds "${x.cell("B1")}")`);
@@ -1707,37 +2081,60 @@ function main() {
     x.getMaxRows() === bigRows && x.getMaxColumns() === exposureColumns,
     `the grid grew to ${bigRows} rows and keeps ${exposureColumns} columns (${x.getMaxRows()} by ${x.getMaxColumns()})`,
   );
-  check(at(5, 16) === "Line 0" && at(bigRows, 16) === `Line ${bigLines - 1}`, `column P holds the ${bigLines} lines`);
+  check(
+    at(5, LINE_AT + 1) === "Line 0" && at(bigRows, LINE_AT + 1) === `Line ${bigLines - 1}`,
+    `column U holds the ${bigLines} lines`,
+  );
+  check(
+    at(5, PART_AT) === "other" && at(bigRows, PART_AT) === "other",
+    "a line with no stock gives one row of the other part",
+  );
   const lastId = fortyIds[(bigLines - 1) % 40];
   check(
-    at(4, 21 + fortyIds.indexOf(lastId)) === lastId && near(at(bigRows, 21 + fortyIds.indexOf(lastId)), 1 / bigLines),
+    at(4, SOURCE_AT + fortyIds.indexOf(lastId)) === lastId &&
+      near(at(bigRows, SOURCE_AT + fortyIds.indexOf(lastId)), 1 / bigLines),
     `the source column of ${lastId} holds the weight of the last line`,
   );
-  check(at(4, 60) === "T039", "column BH holds the id T039");
+  check(at(4, SOURCE_AT + 39) === "T039", "the column of position 40 holds the id T039");
+  check(
+    equityCells(x).every((value) => value === ""),
+    "B27:B31 is empty when the answer holds no equity block",
+  );
+  check(x.cell("A26") === "equity" && x.cell("B26") === "value", "the header of the equity block stays");
+  check(
+    x.block(5, OVERLAP_AT, x.getMaxRows() - 4, 4).every((c) => c.every((v) => v === "")),
+    "O5:R is empty when the answer holds no pair",
+  );
   console.log(`  B1: ${x.cell("B1")}; grid ${x.getMaxRows()} rows, ${x.getMaxColumns()} columns`);
 
-  console.log("\n== Run 3: status 200 with the answer of run 1 again");
+  console.log("\n== Run 3: status 200 with the answer of run 1 again, and tabs of the current layout version");
   replaceHoldings(HOLDINGS_ROWS);
   logFrom = state.log.length;
   state.fetchHandler = () => fakeResponse(200, liveText);
   pause(2);
   const runThree = timedRun();
   checkNoTabChange(reportState, logFrom, "run 3");
+  check(x.cell(VERSION_CELL) === layoutVersion, `${VERSION_CELL} holds the current layout version, so both tabs stay`);
   checkRecorded("run 3", runThree);
   check(x.getMaxRows() === bigRows && x.getMaxColumns() === exposureColumns, "the grid does not shrink");
-  check(lineFaults() === 0, "the lines and the sources of run 1 are back");
+  check(partFaults(x) === 0, "the part rows of run 1 are back");
+  check(pairFaults(x) === 0, "the pairs of run 1 are back");
   check(
-    x.block(5 + funds.length, 4, x.getMaxRows() - 4 - funds.length, 10).every((c) => c.every((v) => v === "")),
+    JSON.stringify(equityCells(x)) === JSON.stringify(equityWant(answer.measures.equity)),
+    "the equity measures of run 1 are back",
+  );
+  check(
+    x.block(5 + funds.length, FUND_AT, x.getMaxRows() - 4 - funds.length, 10).every((c) => c.every((v) => v === "")),
     "the rows under the last fund are empty",
   );
   check(
     x
-      .block(5 + lines.length, 15, x.getMaxRows() - 4 - lines.length, x.getMaxColumns() - 14)
+      .block(5 + parts.length, LINE_AT, x.getMaxRows() - 4 - parts.length, x.getMaxColumns() - LINE_AT + 1)
       .every((c) => c.every((v) => v === "")),
-    "the rows under the last line are empty, so no line of run 2 stays",
+    "the rows under the last part row are empty, so no line of run 2 stays",
   );
   check(
-    x.block(4, 21 + ids.length, 1, x.getMaxColumns() - 20 - ids.length)[0].every((v) => v === ""),
+    x.block(4, SOURCE_AT + ids.length, 1, x.getMaxColumns() - SOURCE_AT + 1 - ids.length)[0].every((v) => v === ""),
     "no id of run 2 follows the last position",
   );
   console.log(`  B1: ${x.cell("B1")}`);
@@ -1748,13 +2145,14 @@ function main() {
   check(thirdTime >= firstTime, "B2 holds the time of run 3");
   pause(5);
   logFrom = state.log.length;
+  fetches = state.fetchCalls.length;
   state.fetchHandler = () =>
     fakeResponse(
       429,
       JSON.stringify({ error: { code: "rate_limited", message: "The request is over the limit.", status: 429 } }),
     );
   context.refreshConcentration();
-  check(state.fetchCalls.length === 4, "run 4 calls the fake once");
+  check(state.fetchCalls.length === fetches + 1, "run 4 calls the fake once");
   check(x.cell("B1") === "FAULT: 429 rate_limited", `B1 is FAULT: 429 rate_limited (B1 holds "${x.cell("B1")}")`);
   check(isDate(x.cell("B2")) && x.cell("B2").getTime() > thirdTime, "B2 holds a later time");
   checkKept(before, "run 4");
@@ -1762,56 +2160,94 @@ function main() {
   checkNoTabChange(reportState, logFrom, "run 4");
   console.log(`  B1: ${x.cell("B1")}`);
 
-  console.log("\n== Run 5: Set API key with an empty box removes the key");
+  console.log("\n== Run 5: status 200 with an answer that the report cannot show");
+  const noOverlaps = JSON.parse(liveText);
+  delete noOverlaps.overlaps;
+  const nullStock = JSON.parse(liveText);
+  nullStock.lines[0].stockWeight = null;
+  const noStock = JSON.parse(liveText);
+  delete noStock.lines.at(-1).stockWeight;
+  const textStock = JSON.parse(liveText);
+  textStock.lines[0].stockWeight = "0.1";
+  const badAnswers = [
+    ["an answer with no overlaps list", noOverlaps],
+    ["a line with null in stockWeight", nullStock],
+    ["a line with no stockWeight field", noStock],
+    ["a line with a text in stockWeight", textStock],
+  ];
+  for (const [name, bad] of badAnswers) {
+    check(context.parseAnswer(JSON.stringify(bad)) === null, `parseAnswer refuses ${name}`);
+    before = x.snapshot();
+    const lastTime = x.cell("B2").getTime();
+    pause(5);
+    logFrom = state.log.length;
+    fetches = state.fetchCalls.length;
+    state.fetchHandler = () => fakeResponse(200, JSON.stringify(bad));
+    context.refreshConcentration();
+    check(state.fetchCalls.length === fetches + 1, `${name}: run 5 calls the fake once`);
+    check(
+      x.cell("B1") === "FAULT: 200 bad_answer",
+      `${name}: B1 is FAULT: 200 bad_answer (B1 holds "${x.cell("B1")}")`,
+    );
+    check(x.cell("B2").getTime() > lastTime, `${name}: B2 holds a later time`);
+    checkKept(before, name);
+    checkNoRecord(name);
+    checkNoTabChange(reportState, logFrom, name);
+  }
+  check(context.parseAnswer(liveText) !== null, "parseAnswer accepts the answer of run 1");
+  console.log(`  B1: ${x.cell("B1")}`);
+
+  console.log("\n== Run 6: Set API key with an empty box removes the key");
   before = x.snapshot();
-  const fourthTime = x.cell("B2").getTime();
+  const fifthTime = x.cell("B2").getTime();
   pause(5);
   logFrom = state.log.length;
+  fetches = state.fetchCalls.length;
   state.promptAnswers.push({ button: BUTTON.OK, text: "  " });
   context.setApiKey();
   check(!state.userProperties.has(KEY_PROPERTY), "an empty box removes the saved key");
   check(state.alerts.at(-1) === "The saved API key is removed.", "the person sees the removal");
   state.fetchHandler = null;
   context.refreshConcentration();
-  check(state.fetchCalls.length === 4, "run 5 calls no fetch");
+  check(state.fetchCalls.length === fetches, "run 6 calls no fetch");
   check(
     x.cell("B1") === "FAULT: no API key. Use Set API key in the add-on menu.",
     `B1 names the missing key and the menu item (B1 holds "${x.cell("B1")}")`,
   );
-  check(x.cell("B2").getTime() > fourthTime, "B2 holds a later time");
-  checkKept(before, "run 5");
-  checkNoRecord("run 5");
-  checkNoTabChange(reportState, logFrom, "run 5");
+  check(x.cell("B2").getTime() > fifthTime, "B2 holds a later time");
+  checkKept(before, "run 6");
+  checkNoRecord("run 6");
+  checkNoTabChange(reportState, logFrom, "run 6");
   console.log(`  B1: ${x.cell("B1")}`);
 
-  console.log("\n== Run 6: the lock is held");
+  console.log("\n== Run 7: the lock is held");
   state.userProperties.set(KEY_PROPERTY, API_KEY);
   state.lockHeldByOther = true;
   before = x.snapshot();
-  const logSix = state.log.length;
+  const logSeven = state.log.length;
   pause(5);
   context.refreshConcentration();
-  check(state.fetchCalls.length === 4, "run 6 calls no fetch");
-  check(state.log.length === logSix, "run 6 changes no cell");
-  check(JSON.stringify(x.snapshot()) === JSON.stringify(before), "run 6 leaves each cell, B1 and B2 too");
-  checkNoRecord("run 6");
+  check(state.fetchCalls.length === fetches, "run 7 calls no fetch");
+  check(state.log.length === logSeven, "run 7 changes no cell");
+  check(JSON.stringify(x.snapshot()) === JSON.stringify(before), "run 7 leaves each cell, B1 and B2 too");
+  checkNoRecord("run 7");
   state.lockHeldByOther = false;
   console.log(`  B1: ${x.cell("B1")}`);
 
-  console.log("\n== Run 7: 201 keys");
+  console.log("\n== Run 8: 201 keys");
   const many = Array.from({ length: 201 }, (_, i) => [`T${String(i).padStart(3, "0")}`, "Example brokerage", 1, "A"]);
   replaceHoldings(many);
   before = x.snapshot();
   logFrom = state.log.length;
   context.refreshConcentration();
-  check(state.fetchCalls.length === 4, "run 7 calls no fetch");
+  check(state.fetchCalls.length === fetches, "run 8 calls no fetch");
   check(x.cell("B1") === "FAULT: too many positions", `B1 is FAULT: too many positions (B1 holds "${x.cell("B1")}")`);
-  checkKept(before, "run 7");
-  checkNoRecord("run 7");
-  checkNoTabChange(reportState, logFrom, "run 7");
+  checkKept(before, "run 8");
+  checkNoRecord("run 8");
+  checkNoTabChange(reportState, logFrom, "run 8");
   console.log(`  B1: ${x.cell("B1")}`);
 
-  console.log("\n== Run 8: eight good runs, so eleven good runs in all");
+  console.log("\n== Run 9: eight good runs, so eleven good runs in all");
   replaceHoldings(HOLDINGS_ROWS);
   state.fetchHandler = () => fakeResponse(200, liveText);
   const firstStart = runStarts.at(-1);
@@ -1832,12 +2268,12 @@ function main() {
     rowsNow.map(([start, seconds], n) => [`${15 + n}`, new Date(start).toISOString(), seconds]),
   );
 
-  console.log("\n== Run-time formulas B8 and B9 of the report");
-  const lastFormula = report.cell("B8");
-  const averageFormula = report.cell("B9");
+  console.log("\n== Run-time formulas B7 and B8 of the report");
+  const lastFormula = report.cell("B7");
+  const averageFormula = report.cell("B8");
   check(
-    report.cell("A8") === "Last run time" && report.cell("A9") === "Average (last 10)",
-    "A8 and A9 hold the labels of the run time",
+    report.cell("A7") === "Last run time" && report.cell("A8") === "Average (last 10)",
+    "A7 and A8 hold the labels of the run time",
   );
   const known = (seconds) => {
     const sheet = new FakeSheet(EXPOSURE_TAB, 30, 4, []);
@@ -1860,20 +2296,174 @@ function main() {
     const sheet = known(c.seconds);
     const last = calculate(lastFormula, sheet);
     const average = calculate(averageFormula, sheet);
-    check(c.last === "" ? last === "" : near(last, c.last), `${c.name}: B8 is ${JSON.stringify(c.last)} (${last})`);
+    check(c.last === "" ? last === "" : near(last, c.last), `${c.name}: B7 is ${JSON.stringify(c.last)} (${last})`);
     check(
       c.average === "" ? average === "" : near(average, c.average),
-      `${c.name}: B9 is ${JSON.stringify(c.average)} (${average})`,
+      `${c.name}: B8 is ${JSON.stringify(c.average)} (${average})`,
     );
     formulaRows.push([c.name, c.seconds.join(", ") || "(none)", JSON.stringify(last), JSON.stringify(average)]);
   }
   const recorded = runRows().map(([, seconds]) => seconds);
-  check(near(calculate(lastFormula, x), recorded[0]), "B8 gives B15 of the Exposure tab after eleven good runs");
+  check(near(calculate(lastFormula, x), recorded[0]), "B7 gives B15 of the Exposure tab after eleven good runs");
   check(
     near(calculate(averageFormula, x), recorded.reduce((a, b) => a + b, 0) / 10),
-    "B9 gives the average of the 10 kept runs of the Exposure tab",
+    "B8 gives the average of the 10 kept runs of the Exposure tab",
   );
-  table(["block", "seconds, newest first", "B8", "B9"], formulaRows);
+  table(["block", "seconds, newest first", "B7", "B8"], formulaRows);
+
+  /**
+   * The accepted state of the report tab with other values in the two cells
+   * that a person types in.
+   */
+  const withInputs = (threshold, minimum) => {
+    const expected = structuredClone(accepted[REPORT_TAB]);
+    const at = (a1) => parseA1(a1, NEW_ROWS, NEW_COLUMNS);
+    expected.grid[at(THRESHOLD_CELL).row - 1][at(THRESHOLD_CELL).column - 1] = threshold;
+    expected.grid[at(MINIMUM_CELL).row - 1][at(MINIMUM_CELL).column - 1] = minimum;
+    return expected;
+  };
+
+  /**
+   * The tab operations of the log from the index `from`: each delete and
+   * each insert, with the name of the tab.
+   */
+  const tabOps = (from) =>
+    state.log
+      .slice(from)
+      .filter((e) => e.op === "deleteSheet" || e.op === "insertSheet")
+      .map((e) => `${e.op} ${e.sheet}`);
+
+  /**
+   * Check the two tabs after a refresh that replaced them: the layout at the
+   * time of the request, the two typed values, the layout version, the
+   * hidden flags, and the answer.
+   */
+  const checkReplaced = (name, threshold, minimum) => {
+    const tabs = Object.fromEntries(state.atFetch.at(-1).tabs);
+    checkLayout(`${name}, ${EXPOSURE_TAB}`, tabs[EXPOSURE_TAB], accepted[EXPOSURE_TAB]);
+    checkLayout(`${name}, ${REPORT_TAB}`, tabs[REPORT_TAB], withInputs(threshold, minimum));
+    const hidden = book.tab(EXPOSURE_TAB);
+    check(hidden.cell(VERSION_CELL) === layoutVersion, `${name}: the new hidden tab holds the current layout version`);
+    check(
+      hidden.hidden && !book.tab(REPORT_TAB).hidden,
+      `${name}: the hidden tab is hidden, and the report tab is not`,
+    );
+    check(hidden.cell("B1") === "OK", `${name}: B1 is OK (B1 holds "${hidden.cell("B1")}")`);
+    check(partFaults(hidden) === 0 && pairFaults(hidden) === 0, `${name}: the new hidden tab holds the answer`);
+  };
+
+  console.log("\n== Run 10: tabs with no layout version are replaced and keep a threshold of 2.5%");
+  const oldExposure = new FakeSheet(EXPOSURE_TAB, 1200, 220, state.log);
+  oldExposure.grid[0][0] = "Status";
+  oldExposure.grid[0][1] = "OK";
+  oldExposure.grid[4][14] = "ticker:OLD";
+  oldExposure.grid[4][19] = 0.5;
+  oldExposure.hidden = true;
+  const oldReport = new FakeSheet(REPORT_TAB, NEW_ROWS, NEW_COLUMNS, state.log);
+  oldReport.grid[14][0] = "Threshold";
+  oldReport.grid[14][1] = 0.025;
+  oldReport.grid[17][0] = "=LET(old,1,old)";
+  book.sheets.splice(0, book.sheets.length, oldReport, makeHoldings(HOLDINGS_ROWS), oldExposure);
+  state.fetchHandler = () => fakeResponse(200, liveText);
+  runStarts.length = 0;
+  logFrom = state.log.length;
+  pause(2);
+  const runTen = timedRun();
+  check(
+    JSON.stringify(tabOps(logFrom)) ===
+      JSON.stringify([
+        `deleteSheet ${EXPOSURE_TAB}`,
+        `insertSheet ${EXPOSURE_TAB}`,
+        `deleteSheet ${REPORT_TAB}`,
+        `insertSheet ${REPORT_TAB}`,
+      ]),
+    `run 10 deletes each old tab and creates it again, the hidden tab first (${tabOps(logFrom).join("; ")})`,
+  );
+  check(
+    indexSince(logFrom, (e) => e.op === "fetch") > indexSince(logFrom, (e) => e.op === "hideSheet"),
+    "run 10 replaces the tabs before the request",
+  );
+  check(!book.sheets.includes(oldExposure) && !book.sheets.includes(oldReport), "run 10: no old tab stays");
+  check(
+    JSON.stringify(book.names()) === JSON.stringify([REPORT_TAB, "Holdings", EXPOSURE_TAB]),
+    "run 10: each new tab takes the position of the old tab",
+  );
+  check(book.tab(REPORT_TAB).cell(THRESHOLD_CELL) === 0.025, "run 10: the new report tab keeps the threshold of 2.5%");
+  check(
+    book.tab(REPORT_TAB).cell(MINIMUM_CELL) === 0.1,
+    "run 10: the overlap minimum gets its default, because the old tab holds none",
+  );
+  checkReplaced("run 10", 0.025, 0.1);
+  checkRecorded("run 10", runTen);
+
+  console.log("\n== Run 11: tabs with the current layout version stay");
+  const keptOrder = [REPORT_TAB, "Holdings", EXPOSURE_TAB];
+  const keptExposure = book.tab(EXPOSURE_TAB);
+  const keptReport = book.tab(REPORT_TAB);
+  const keptState = keptReport.state();
+  logFrom = state.log.length;
+  pause(2);
+  const runEleven = timedRun();
+  checkNoTabChange(keptState, logFrom, "run 11", keptOrder);
+  check(
+    book.tab(EXPOSURE_TAB) === keptExposure && book.tab(REPORT_TAB) === keptReport,
+    "run 11: both tabs are the tabs of run 10",
+  );
+  check(keptReport.cell(THRESHOLD_CELL) === 0.025, "run 11: the threshold of 2.5% stays");
+  checkRecorded("run 11", runEleven);
+
+  console.log("\n== Run 12: tabs with an older layout version are replaced and keep both typed values");
+  keptExposure.grid[2][1] = layoutVersion - 1;
+  keptReport.grid[20][1] = 0.03;
+  keptReport.grid[21][1] = 0.25;
+  runStarts.length = 0;
+  logFrom = state.log.length;
+  pause(2);
+  const runTwelve = timedRun();
+  check(tabOps(logFrom).length === 4, `run 12 deletes and creates both tabs (${tabOps(logFrom).join("; ")})`);
+  check(
+    JSON.stringify(book.names()) === JSON.stringify(keptOrder),
+    "run 12: each new tab takes the position of the old tab",
+  );
+  check(
+    book.tab(REPORT_TAB).cell(THRESHOLD_CELL) === 0.03 && book.tab(REPORT_TAB).cell(MINIMUM_CELL) === 0.25,
+    "run 12: the new report tab keeps the threshold of 3% and the overlap minimum of 25%",
+  );
+  checkReplaced("run 12", 0.03, 0.25);
+  checkRecorded("run 12", runTwelve);
+
+  console.log("\n== Run 13: the report tab is absent, and the hidden tab holds the current layout version");
+  const stayed = book.tab(EXPOSURE_TAB);
+  book.sheets.splice(book.sheets.indexOf(book.tab(REPORT_TAB)), 1);
+  logFrom = state.log.length;
+  pause(2);
+  const runThirteen = timedRun();
+  check(
+    JSON.stringify(tabOps(logFrom)) === JSON.stringify([`insertSheet ${REPORT_TAB}`]),
+    `run 13 creates the report tab alone (${tabOps(logFrom).join("; ")})`,
+  );
+  check(book.tab(EXPOSURE_TAB) === stayed, "run 13: the hidden tab stays");
+  check(
+    JSON.stringify(book.names()) === JSON.stringify(["Holdings", EXPOSURE_TAB, REPORT_TAB]),
+    "run 13: the new report tab is the last tab",
+  );
+  checkLayout(`run 13, ${REPORT_TAB}`, Object.fromEntries(state.atFetch.at(-1).tabs)[REPORT_TAB], accepted[REPORT_TAB]);
+  checkRecorded("run 13", runThirteen);
+
+  console.log("\n== Run 14: the hidden tab is absent, so the script replaces the report tab too");
+  book.tab(REPORT_TAB).grid[20][1] = 0.04;
+  book.sheets.splice(book.sheets.indexOf(book.tab(EXPOSURE_TAB)), 1);
+  runStarts.length = 0;
+  logFrom = state.log.length;
+  pause(2);
+  const runFourteen = timedRun();
+  check(
+    JSON.stringify(tabOps(logFrom)) ===
+      JSON.stringify([`insertSheet ${EXPOSURE_TAB}`, `deleteSheet ${REPORT_TAB}`, `insertSheet ${REPORT_TAB}`]),
+    `run 14 creates the hidden tab, then deletes and creates the report tab (${tabOps(logFrom).join("; ")})`,
+  );
+  checkReplaced("run 14", 0.04, 0.1);
+  checkRecorded("run 14", runFourteen);
 
   const keyCells = book.sheets.flatMap((sheet) =>
     sheet.grid.flatMap((cells) => cells.filter((v) => typeof v === "string" && v.includes(API_KEY))),

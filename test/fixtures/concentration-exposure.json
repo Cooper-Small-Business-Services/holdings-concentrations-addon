@@ -1,10 +1,14 @@
 {
   "tab": "Concentration.Exposure",
-  "note": "The answer of the concentration route. The script writes B1, B2, B5:B12, D5:M, O5:T, and one source column for each position from column U, with the position id in row 4. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. This file writes the labels and the format alone. The tab holds no formula and no dollar value.",
+  "note": "The answer of the concentration route. B3 holds the layout version. The script writes B1, B2, B5:B12, B27:B31, D5:M, O5:R, the rows of the lines from T5, and one source column for each position from column AB, with the position id in row 4. A line gives one row for its stock part, one row for its other part, or both, and column AA names the part. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. This file writes the layout version, the labels, and the format alone. The tab holds no formula and no dollar value.",
   "cells": [
     {
       "range": "A1:A2",
       "values": [["Status"], ["Last run"]]
+    },
+    {
+      "range": "A3:B3",
+      "values": [["layoutVersion", 1]]
     },
     {
       "range": "A4:A12",
@@ -42,35 +46,143 @@
       ]
     },
     {
-      "range": "O4:T4",
-      "values": [["key", "name", "ticker", "lei", "class", "weight"]]
+      "range": "O4:R4",
+      "values": [["firstId", "secondId", "overlap", "sharedLineCount"]]
+    },
+    {
+      "range": "T4:AA4",
+      "values": [["key", "name", "ticker", "lei", "class", "weight", "stockWeight", "part"]]
     },
     {
       "range": "A14:B14",
       "values": [["runStart", "seconds"]]
+    },
+    {
+      "range": "A26:B26",
+      "values": [["equity", "value"]]
+    },
+    {
+      "range": "A27:A31",
+      "values": [["weight"], ["lineCount"], ["top10Weight"], ["hhi"], ["effectiveCount"]]
     }
   ],
   "format": {
     "hidden": true,
+    "columns": 227,
     "frozenRows": 4,
-    "columns": 220,
-    "columnWidths": { "A": 170, "B": 150, "C": 24, "D:M": 110, "N": 24, "O": 220, "P": 260, "Q:T": 90, "U:HL": 110 },
+    "columnWidths": {
+      "A": 170,
+      "B": 150,
+      "C": 24,
+      "D:M": 110,
+      "N": 24,
+      "O:R": 110,
+      "S": 24,
+      "T": 220,
+      "U": 260,
+      "V:AA": 90,
+      "AB:HS": 110
+    },
     "cells": [
-      { "range": "A4:HL4", "bold": true, "background": "#f7f6f1" },
-      { "range": "A14:B14", "bold": true, "background": "#f7f6f1" },
-      { "range": "A15:A24", "numberFormat": "yyyy-mm-dd hh:mm:ss" },
-      { "range": "B15:B24", "numberFormat": "0.000" },
-      { "range": "B2", "numberFormat": "yyyy-mm-dd hh:mm:ss" },
-      { "range": "B5", "numberFormat": "#,##0" },
-      { "range": "B6", "numberFormat": "0.000000" },
-      { "range": "B7", "numberFormat": "0.0" },
-      { "range": "B8", "numberFormat": "0.00" },
-      { "range": "B9:B12", "numberFormat": "0.000000" },
-      { "range": "F5:F", "numberFormat": "yyyy-mm-dd" },
-      { "range": "H5:H", "numberFormat": "#,##0" },
-      { "range": "I5:J", "numberFormat": "0.00000" },
-      { "range": "K5:M", "numberFormat": "#,##0" },
-      { "range": "T5:HL", "numberFormat": "0.00000" }
+      {
+        "range": "A4:HS4",
+        "bold": true,
+        "background": "#f7f6f1"
+      },
+      {
+        "range": "A14:B14",
+        "bold": true,
+        "background": "#f7f6f1"
+      },
+      {
+        "range": "A26:B26",
+        "bold": true,
+        "background": "#f7f6f1"
+      },
+      {
+        "range": "A15:A24",
+        "numberFormat": "yyyy-mm-dd hh:mm:ss"
+      },
+      {
+        "range": "B15:B24",
+        "numberFormat": "0.000"
+      },
+      {
+        "range": "B2",
+        "numberFormat": "yyyy-mm-dd hh:mm:ss"
+      },
+      {
+        "range": "B5",
+        "numberFormat": "#,##0"
+      },
+      {
+        "range": "B6",
+        "numberFormat": "0.000000"
+      },
+      {
+        "range": "B7",
+        "numberFormat": "0.0"
+      },
+      {
+        "range": "B8",
+        "numberFormat": "0.00"
+      },
+      {
+        "range": "B9:B12",
+        "numberFormat": "0.000000"
+      },
+      {
+        "range": "B27",
+        "numberFormat": "0.000000"
+      },
+      {
+        "range": "B28",
+        "numberFormat": "#,##0"
+      },
+      {
+        "range": "B29",
+        "numberFormat": "0.000000"
+      },
+      {
+        "range": "B30",
+        "numberFormat": "0.0"
+      },
+      {
+        "range": "B31",
+        "numberFormat": "0.00"
+      },
+      {
+        "range": "F5:F",
+        "numberFormat": "yyyy-mm-dd"
+      },
+      {
+        "range": "H5:H",
+        "numberFormat": "#,##0"
+      },
+      {
+        "range": "I5:J",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "K5:M",
+        "numberFormat": "#,##0"
+      },
+      {
+        "range": "Q5:Q",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "R5:R",
+        "numberFormat": "#,##0"
+      },
+      {
+        "range": "Y5:Z",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "AB5:HS",
+        "numberFormat": "0.00000"
+      }
     ]
   }
 }

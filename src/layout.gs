@@ -2,15 +2,20 @@
  * The layout of the two tabs of the concentration report, and the functions
  * that create a tab from its layout.
  *
- * The tab Concentration.Exposure is hidden. It holds the answer of the
- * concentration route and the run times of the 10 newest good refreshes.
- * concentration.gs writes both. The tab Concentration is the report. Each of
- * its cells is a label, a formula, or the threshold cell B15. The formulas
- * read Concentration.Exposure and the Holdings tab.
+ * The tab Concentration.Exposure is hidden. It holds the layout version, the
+ * answer of the concentration route, and the run times of the 10 newest good
+ * refreshes. concentration.gs writes the answer and the run times. The tab
+ * Concentration is the report. Each of its cells is a label, a formula, or
+ * one of the two cells that the person types in: the threshold and the
+ * overlap minimum. The formulas read Concentration.Exposure and the Holdings
+ * tab.
  *
- * A refresh calls ensureTabs before the request. The function creates each
- * tab that is absent, and it leaves a tab that exists as it is. Delete a tab
- * to get its layout again on the next refresh.
+ * A refresh calls ensureTabs before the request. The function compares the
+ * layout version of the hidden tab with LAYOUT_VERSION. When the two are
+ * equal, it creates the report tab if that tab is absent. When they differ,
+ * or when the hidden tab is absent, it replaces both tabs and keeps the two
+ * values that the person typed. Delete the hidden tab to get the layout of
+ * both tabs again on the next refresh.
  */
 
 /**
@@ -19,9 +24,123 @@
 const REPORT_TAB = "Concentration";
 
 /**
+ * The version of the layout of the two tabs. Add 1 when a change moves a cell
+ * that a formula or the script reads. The next refresh then replaces the two
+ * tabs of each spreadsheet.
+ */
+const LAYOUT_VERSION = 1;
+
+/**
+ * The cell of the tab Concentration.Exposure that holds the layout version.
+ * A tab with no value in this cell holds a layout with no version, and a
+ * refresh replaces it.
+ */
+const VERSION_CELL = "B3";
+
+/**
  * The count of rows of each new tab.
  */
 const TAB_ROWS = 1000;
+
+/**
+ * The count of columns of the report tab. The last column is Z.
+ */
+const REPORT_COLUMNS = 26;
+
+/**
+ * The two cells of the report tab that the person types in. Each one has a
+ * name, the label in column A of its row, and the value of a new tab.
+ * readInputs finds a cell by its label. When a label gets another text, make
+ * readInputs find the old text too, or a replaced tab loses the typed value.
+ */
+const INPUTS = {
+  threshold: { label: "Threshold", value: 0.01 },
+  overlapMinimum: { label: "Overlap minimum", value: 0.1 },
+};
+
+/**
+ * The count of rows at the top of a report tab that readInputs reads.
+ */
+const INPUT_ROWS = 40;
+
+/**
+ * The row of the threshold cell, and the row of the overlap minimum cell.
+ * Both cells are in column B.
+ */
+const THRESHOLD_ROW = 21;
+const OVERLAP_ROW = 22;
+
+/**
+ * The row of the header of the company table. The spill of the report starts
+ * in the next row.
+ */
+const TABLE_ROW = 24;
+
+/**
+ * The last row that the fund table can use. The spill of the fund table
+ * starts in D3, and the header of the company table is in row TABLE_ROW.
+ */
+const FUND_LAST_ROW = TABLE_ROW - 1;
+
+/**
+ * A reference to a range of the tab Concentration.Exposure.
+ */
+function exposure(range) {
+  return `'${EXPOSURE_TAB}'!${range}`;
+}
+
+/**
+ * The cell of the tab Concentration.Exposure that holds one measure.
+ */
+function measureCell(name) {
+  return exposure(`B${FIRST_DATA_ROW + MEASURE_NAMES.indexOf(name)}`);
+}
+
+/**
+ * The cell of the tab Concentration.Exposure that holds one field of the
+ * equity block.
+ */
+function equityCell(name) {
+  return exposure(`B${EQUITY_HEADER_ROW + 1 + EQUITY_NAMES.indexOf(name)}`);
+}
+
+/**
+ * The column letters of the blocks of the tab Concentration.Exposure that the
+ * report formulas read: the funds block, the overlaps block, the lines
+ * block, and the sources block. The sources block ends at the column of
+ * position MAX_POSITIONS, because a request holds MAX_POSITIONS positions at
+ * most.
+ */
+function exposureColumns() {
+  const fund = (name) => columnLetter(FUND_COLUMN + FUND_FIELDS.indexOf(name));
+  const line = (name) => columnLetter(LINE_COLUMN + LINE_FIELDS.indexOf(name));
+  return {
+    fundId: fund("id"),
+    fundWeight: fund("weight"),
+    fundCovered: fund("coveredWeight"),
+    pairFirst: columnLetter(OVERLAP_COLUMN),
+    pairSecond: columnLetter(OVERLAP_COLUMN + 1),
+    pairOverlap: columnLetter(OVERLAP_COLUMN + 2),
+    pairShared: columnLetter(OVERLAP_COLUMN + 3),
+    key: line("key"),
+    name: line("name"),
+    ticker: line("ticker"),
+    class: line("class"),
+    weight: line("weight"),
+    stock: line("stockWeight"),
+    part: columnLetter(PART_COLUMN),
+    first: columnLetter(SOURCE_COLUMN),
+    last: columnLetter(SOURCE_COLUMN + MAX_POSITIONS - 1),
+  };
+}
+
+/**
+ * A column of a block of the tab Concentration.Exposure, from the first data
+ * row to the last row of the tab.
+ */
+function exposureColumn(letter) {
+  return exposure(`$${letter}$${FIRST_DATA_ROW}:$${letter}`);
+}
 
 /**
  * The formula of B4: the sum of the Value column of the Holdings tab. The
@@ -39,54 +158,102 @@ IF(ISNA(c),"No Holdings column Value",SUM(INDIRECT("Holdings!C"&c,FALSE))))`;
  * report date, the count of holdings, the weight, and the covered part. When
  * the route looked through no fund, D3 shows a text.
  */
-const FUNDS_FORMULA = `=LET(r,IFNA(FILTER('Concentration.Exposure'!$D$5:$J,'Concentration.Exposure'!$D$5:$D<>""),""),
+function fundsFormula() {
+  const x = exposureColumns();
+  const block = exposure(`$${x.fundId}$${FIRST_DATA_ROW}:$${x.fundCovered}`);
+  return `=LET(r,IFNA(FILTER(${block},${exposureColumn(x.fundId)}<>""),""),
 IF(INDEX(r,1,1)="","No fund looked through.",
 HSTACK(CHOOSECOLS(r,1,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6)))))`;
+}
 
 /**
- * The formula of B8: the seconds of the newest run in A15:B24 of the tab
- * Concentration.Exposure. B8 is empty when no run is recorded.
+ * The formula of B7: the seconds of the newest run in A15:B24 of the tab
+ * Concentration.Exposure. B7 is empty when no run is recorded.
  */
 const RUN_LAST_FORMULA = `=IF(ISNUMBER('Concentration.Exposure'!B15),'Concentration.Exposure'!B15,"")`;
 
 /**
- * The formula of B9: the average seconds of the runs in A15:B24 of the tab
+ * The formula of B8: the average seconds of the runs in A15:B24 of the tab
  * Concentration.Exposure. The block keeps 10 runs at most, so the average
- * uses each recorded run when fewer than 10 exist. B9 is empty when no run is
+ * uses each recorded run when fewer than 10 exist. B8 is empty when no run is
  * recorded.
  */
 const RUN_AVERAGE_FORMULA = `=IF(COUNT('Concentration.Exposure'!B15:B24)=0,"",AVERAGE('Concentration.Exposure'!B15:B24))`;
 
 /**
- * The column letters of the sources block of the tab Concentration.Exposure.
- * The block starts at SOURCE_COLUMN. It ends at the column of position
- * MAX_POSITIONS, because a request holds MAX_POSITIONS positions at most.
+ * The formula of a cell that shows one field of the equity block. The cell is
+ * empty when the field holds no number, so a portfolio with no stock shows no
+ * error.
  */
-function sourceColumns() {
-  return { first: columnLetter(SOURCE_COLUMN), last: columnLetter(SOURCE_COLUMN + MAX_POSITIONS - 1) };
+function equityFormula(name) {
+  return `=IF(ISNUMBER(${equityCell(name)}),${equityCell(name)},"")`;
 }
 
 /**
- * The names at the start of the LET of H17 and of A18.
+ * The formula of A15: one text when the last good answer holds lines and no
+ * equity block. The cell is empty before the first good refresh.
+ */
+function noStockFormula() {
+  return `=IF(AND(ISNUMBER(${measureCell("lineCount")}),NOT(ISNUMBER(${equityCell("weight")}))),"Your portfolio holds no stock.","")`;
+}
+
+/**
+ * The formula of one row of the Composition block: the sum of the stock
+ * weight of the rows of the stock part that meet the comparison with the
+ * threshold. The comparison is `>=` or `<`.
+ */
+function stockSumFormula(comparison) {
+  const x = exposureColumns();
+  const stock = exposureColumn(x.stock);
+  return `=SUMIFS(${stock},${exposureColumn(x.part)},"${STOCK_PART}",${stock},"${comparison}"&$B$${THRESHOLD_ROW})`;
+}
+
+/**
+ * The formula of the last row of the Composition block: the sum of the part
+ * of each line that is not stock. The part is the weight minus the stock
+ * weight, on the rows of the other part.
+ */
+function otherSumFormula() {
+  const x = exposureColumns();
+  const part = exposureColumn(x.part);
+  return `=SUMIFS(${exposureColumn(x.weight)},${part},"${OTHER_PART}")-SUMIFS(${exposureColumn(x.stock)},${part},"${OTHER_PART}")`;
+}
+
+/**
+ * The note under the total of the report spill.
+ */
+const SUM_NOTE =
+  "The positions in a fund report can add up to more than 100% of the net assets of the fund. This total can then be above 100%.";
+
+/**
+ * The note under the header of the fund overlap list.
+ */
+const OVERLAP_NOTE = "Overlap is the part of the two funds that sits in the same stocks.";
+
+/**
+ * The names at the start of the LET of the fund header and of the report
+ * spill.
  *
- * LK, LN, LT, LC, and LW are the columns of the lines block. LS is the
- * sources block, and LH is the row of the position ids. LS and LH end at the
- * column of position MAX_POSITIONS. fid holds each fund that the route looked
- * through. f holds each fund of fid that holds a stock. fid and f hold one
- * empty string when no fund matches.
+ * LK, LN, LT, LC, LW, LX, and LP are the columns of the lines block: the key,
+ * the name, the ticker, the class, the weight, the stock weight, and the part
+ * name. LS is the sources block, and LH is the row of the position ids. LS
+ * and LH end at the column of position MAX_POSITIONS. fid holds each fund
+ * that the route looked through. f holds each fund of fid that holds a stock.
+ * fid and f hold one empty string when no fund matches.
  */
 function lineNames() {
-  const { first, last } = sourceColumns();
-  return `=LET(LK,'Concentration.Exposure'!$O$5:$O,LN,'Concentration.Exposure'!$P$5:$P,LT,'Concentration.Exposure'!$Q$5:$Q,LC,'Concentration.Exposure'!$S$5:$S,LW,'Concentration.Exposure'!$T$5:$T,
-LS,'Concentration.Exposure'!$${first}$5:$${last},LH,'Concentration.Exposure'!$${first}$4:$${last}$4,
-fid,IFNA(FILTER('Concentration.Exposure'!$D$5:$D,'Concentration.Exposure'!$D$5:$D<>""),""),
-f,IFNA(FILTER(fid,MAP(fid,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,"stock")>0,FALSE)))),""),`;
+  const x = exposureColumns();
+  const column = (letter) => exposureColumn(letter);
+  return `=LET(LK,${column(x.key)},LN,${column(x.name)},LT,${column(x.ticker)},LC,${column(x.class)},LW,${column(x.weight)},LX,${column(x.stock)},LP,${column(x.part)},
+LS,${exposure(`$${x.first}$${FIRST_DATA_ROW}:$${x.last}`)},LH,${exposure(`$${x.first}$${HEADER_ROW}:$${x.last}$${HEADER_ROW}`)},
+fid,IFNA(FILTER(${column(x.fundId)},${column(x.fundId)}<>""),""),
+f,IFNA(FILTER(fid,MAP(fid,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,"${STOCK_PART}")<>0,FALSE)))),""),`;
 }
 
 /**
- * The formula of H17: the header of the columns of the funds that hold a
- * stock, one column for each fund. The header is empty when no fund holds a
- * stock.
+ * The formula of the fund header, in column H of row TABLE_ROW: the header of
+ * the columns of the funds that hold a stock, one column for each fund. The
+ * header is empty when no fund holds a stock.
  */
 function fundHeaderFormula() {
   return `${lineNames()}
@@ -94,8 +261,23 @@ TRANSPOSE(f))`;
 }
 
 /**
- * The formula of A18: the stock table and the block of the lines that are
- * not individual stocks, as one spill.
+ * The formula of the report spill, in column A of the row under TABLE_ROW.
+ * The spill holds these blocks from the top: the company table, the block of
+ * the holdings that are not stocks, the total, and the fund overlap list.
+ *
+ * Each row of the lines block is one part of a line. pw is the weight of the
+ * part: the stock weight on a row of the stock part, and the weight minus the
+ * stock weight on a row of the other part. dw is the part of pw that came
+ * through no fund. A company row is a row of the stock part with a stock
+ * weight at or above the threshold, whatever the class of the line. The
+ * source cells of that row are the stock part of each source, so the Direct
+ * column and the fund columns add up to the row.
+ *
+ * A row of the other part gets a row of its own when the class of its line
+ * is not stock and the line is a residual line or holds a direct position.
+ * Each other row of the other part goes into the group of its class. The
+ * groups of the classes stock and fund always get a row. Another group with
+ * a value under 100 goes into one row of small holdings.
  *
  * The formula finds the Symbol and the Description columns of the Holdings
  * tab by the header text in row 1, as B4 finds the Value column. When B4
@@ -104,32 +286,35 @@ TRANSPOSE(f))`;
  * FILTER only when a row matches.
  */
 function reportFormula() {
+  const x = exposureColumns();
+  const column = (letter) => exposureColumn(letter);
   return `${lineNames()}
 hh,Holdings!$1:$1,
 hs,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Symbol"))),
 hd,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Description"))),
-tot,IF(ISNUMBER($B$4),$B$4,NA()),thr,$B$15,
+tot,IF(ISNUMBER($B$4),$B$4,NA()),thr,$B$${THRESHOLD_ROW},
 num,ARRAYFORMULA(IF(ISNUMBER(LS),LS,0)),
 isf,MAP(LH,LAMBDA(h,IF(h="",0,IF(ISNUMBER(XMATCH(h,fid)),1,0)))),
-dw,ARRAYFORMULA(IF(ISNUMBER(LW),LW-MMULT(num,TRANSPOSE(isf)),0)),
-sel,ARRAYFORMULA((LC="stock")*ISNUMBER(LW)*(LW>=thr)),
+pw,ARRAYFORMULA(IF(LP="${STOCK_PART}",LX,IF(LP="${OTHER_PART}",LW-LX,0))),
+dw,ARRAYFORMULA(IF(LP="",0,pw-MMULT(num,TRANSPOSE(isf)))),
+sel,ARRAYFORMULA((LP="${STOCK_PART}")*ISNUMBER(LX)*(LX>=thr)),
 top,IF(SUM(sel)=0,HSTACK("","No company at or above the threshold."),
- LET(sn,FILTER(LN,sel),st,FILTER(LT,sel),sw,FILTER(LW,sel),ss,FILTER(LS,sel),mx,MAX(sw),
-  fx,MAKEARRAY(ROWS(sw),ROWS(f),LAMBDA(i,j,IFERROR(N(INDEX(ss,i,XMATCH(INDEX(f,j),LH))),0))),
-  HSTACK(SEQUENCE(ROWS(sw)),sn,st,ARRAYFORMULA(sw*tot),sw,
+ LET(blk,SORT(HSTACK(FILTER(LN,sel),FILTER(LT,sel),FILTER(LX,sel),FILTER(dw,sel),FILTER(LS,sel)),3,FALSE),
+  sw,CHOOSECOLS(blk,3),mx,MAX(sw),
+  fx,MAKEARRAY(ROWS(sw),ROWS(f),LAMBDA(i,j,IFERROR(N(INDEX(blk,i,4+XMATCH(INDEX(f,j),LH))),0))),
+  HSTACK(SEQUENCE(ROWS(sw)),CHOOSECOLS(blk,1,2),ARRAYFORMULA(sw*tot),sw,
    MAP(sw,LAMBDA(x,SPARKLINE(x,{"charttype","bar";"max",mx;"color1","#2a78d6"}))),
-   ARRAYFORMULA(ROUND(FILTER(dw,sel),12)),fx))),
-rsel,ARRAYFORMULA((LC="stock")*ISNUMBER(LW)*(LW<thr)),
-rw,SUMIFS(LW,LC,"stock",LW,"<"&thr),
-rc,COUNTIFS(LC,"stock",LW,"<"&thr),
-rf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LC,"stock",LW,"<"&thr),0))),
+   ARRAYFORMULA(ROUND(CHOOSECOLS(blk,4),12)),fx))),
+rsel,ARRAYFORMULA((LP="${STOCK_PART}")*ISNUMBER(LX)*(LX<thr)),
+rw,SUMIFS(LX,LP,"${STOCK_PART}",LX,"<"&thr),
+rc,COUNTIFS(LP,"${STOCK_PART}",LX,"<"&thr,LX,"<>0"),
+rf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,"${STOCK_PART}",LX,"<"&thr),0))),
 rest,HSTACK("","Stocks under "&TEXT(thr,"0.00%")&" ("&TEXT(rc,"#,##0")&")","",rw*tot,rw,"",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),
-ns,ARRAYFORMULA((LK<>"")*(LC<>"stock")),
-own,ARRAYFORMULA(ns*(((LEFT(LK,9)="residual:")+(ABS(dw)>1E-12))>0)),
-grp,ARRAYFORMULA(ns*(own=0)),
-keep,ARRAYFORMULA(own*IF((LEFT(LK,9)="residual:")*(LW=0),0,1)),
+own,ARRAYFORMULA((LP="${OTHER_PART}")*(LC<>"stock")*(((LEFT(LK,9)="residual:")+(ABS(dw)>1E-12))>0)),
+grp,ARRAYFORMULA((LP="${OTHER_PART}")*(own=0)),
+keep,ARRAYFORMULA(own*IF((LEFT(LK,9)="residual:")*(pw=0),0,1)),
 nown,SUM(keep),
-on,FILTER(LN,keep),ok,FILTER(LK,keep),oc,FILTER(LC,keep),ow,FILTER(LW,keep),os,FILTER(LS,keep),
+on,FILTER(LN,keep),ok,FILTER(LK,keep),oc,FILTER(LC,keep),ow,FILTER(pw,keep),os,FILTER(LS,keep),
 oname,IF(ISNA(hs)+ISNA(hd),on,
  LET(sc,INDIRECT("Holdings!C"&hs,FALSE),sy,ARRAYFORMULA(IF(ROW(sc)=1,"",sc)),de,INDIRECT("Holdings!C"&hd,FALSE),
   MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,sy,de),n))))),
@@ -137,86 +322,90 @@ kind,MAP(ok,oc,LAMBDA(k,c,IF(LEFT(k,9)="residual:","not looked through",SWITCH(c
 came,BYROW(os,LAMBDA(r,IFERROR(TEXTJOIN(", ",TRUE,FILTER(LH,r<>"",r<>0)),""))),
 ownRows,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),
 cls,UNIQUE(FILTER(LC,grp)),
-gw,MAP(cls,LAMBDA(x,SUM(FILTER(LW,grp,LC=x)))),
-gn,MAP(cls,LAMBDA(x,ROWS(FILTER(LW,grp,LC=x)))),
-gl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,"cash","Cash and money market funds","derivative","Derivatives","treasury","Treasury securities","other","Other holdings",x)&" inside funds ("&TEXT(m,"#,##0")&")")),
-gf,MAP(cls,LAMBDA(x,TEXTJOIN(", ",TRUE,MAP(fid,LAMBDA(y,IF(y="","",IF(SUM(FILTER(INDEX(num,0,XMATCH(y,LH)),grp,LC=x))<>0,y,""))))))),
-grpAll,HSTACK(gl,cls,ARRAYFORMULA(gw*tot),gw,gf),
-big,ARRAYFORMULA(IF(ISNUMBER(gw*tot),IF(ABS(gw*tot)>=100,1,0),1)),
+gw,MAP(cls,LAMBDA(x,SUM(FILTER(pw,grp,LC=x)))),
+gn,MAP(cls,LAMBDA(x,ROWS(FILTER(pw,grp,LC=x)))),
+gl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,"stock","Bonds and other securities of companies you hold as stock","fund","Funds held by your funds, not looked through","cash","Cash and money market funds inside funds","derivative","Derivatives inside funds","treasury","Treasury securities inside funds","other","Other holdings inside funds",x&" inside funds")&" ("&TEXT(m,"#,##0")&")")),
+gk,MAP(cls,LAMBDA(x,SWITCH(x,"stock","bond or other security","fund","fund, not looked through",x))),
+gf,MAP(cls,LAMBDA(x,TEXTJOIN(", ",TRUE,MAP(LH,LAMBDA(y,IF(y="","",IF(SUM(FILTER(INDEX(num,0,XMATCH(y,LH)),grp,LC=x))<>0,y,""))))))),
+grpAll,HSTACK(gl,gk,ARRAYFORMULA(gw*tot),gw,gf),
+big,ARRAYFORMULA(IF((cls="stock")+(cls="fund")>0,1,IF(ISNUMBER(gw*tot),IF(ABS(gw*tot)>=100,1,0),1))),
 sm,ARRAYFORMULA(1-big),
 ng,IF(SUM(grp)=0,0,SUM(big)),
 nsm,IF(SUM(grp)=0,0,SUM(sm)),
 smallRow,HSTACK("Other small holdings inside funds ("&TEXT(SUM(FILTER(gn,sm)),"#,##0")&")",
- TEXTJOIN(", ",TRUE,FILTER(cls,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),
+ TEXTJOIN(", ",TRUE,FILTER(gk,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),
  IFERROR(TEXTJOIN(", ",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(",",TRUE,FILTER(gf,sm)),",")))))),"")),
 main,IF(nown=0,FILTER(grpAll,big),IF(ng=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),
-nis,IF(nown+ng=0,IF(nsm=0,"No line that is not an individual stock.",smallRow),
+nis,IF(nown+ng=0,IF(nsm=0,"No holding other than stocks.",smallRow),
  IF(nsm=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),
 blank,MAKEARRAY(ROWS(nis),1,LAMBDA(i,j,"")),
+pa,${column(x.pairFirst)},pb,${column(x.pairSecond)},po,${column(x.pairOverlap)},pn,${column(x.pairShared)},
+fw,${column(x.fundWeight)},
+psel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$${OVERLAP_ROW})),
+plist,IF(SUM(psel)=0,HSTACK("","No pair of funds is at or above the overlap minimum."),
+ LET(qa,FILTER(pa,psel),qb,FILTER(pb,psel),gap,MAKEARRAY(ROWS(qa),1,LAMBDA(i,j,"")),
+  HSTACK(gap,qa,qb,gap,FILTER(po,psel),FILTER(pn,psel),
+   MAP(qa,LAMBDA(x,XLOOKUP(x,${column(x.fundId)},fw,""))),MAP(qb,LAMBDA(x,XLOOKUP(x,${column(x.fundId)},fw,"")))))),
 IFNA(VSTACK(top,rest,"",
- HSTACK("","Not individual stocks"),
+ HSTACK("","Not stocks"),
  {"","Line","Kind","Value","% of portfolio","Came from"},
  HSTACK(blank,nis),
  "",
- HSTACK("","Total of all lines","",SUM(LW)*tot,SUM(LW))),""))`;
+ HSTACK("","Total of all lines","",SUM(pw)*tot,SUM(pw)),
+ HSTACK("","${SUM_NOTE}"),
+ "",
+ HSTACK("","Fund overlap"),
+ HSTACK("","${OVERLAP_NOTE}"),
+ {"","Fund 1","Fund 2","","Overlap","Shared stocks","Fund 1 weight","Fund 2 weight"},
+ plist),""))`;
 }
 
 /**
- * The layout of the tab Concentration.Exposure. The cells hold the labels
- * alone. The refresh writes the status, the time, and the answer. A good
- * refresh also writes its start time and its seconds into the run-time block
- * A15:B24, newest first. The grid holds the source column of each position up
- * to MAX_POSITIONS.
+ * The layout of the tab Concentration.Exposure. The cells hold the layout
+ * version and the labels. The refresh writes the status, the time, and the
+ * answer. A good refresh also writes its start time and its seconds into the
+ * run-time block A15:B24, newest first. The grid holds the source column of
+ * each position up to MAX_POSITIONS.
  */
 function exposureLayout() {
-  const { first, last } = sourceColumns();
+  const x = exposureColumns();
+  const partColumn = x.part;
+  const lineFirst = columnLetter(LINE_COLUMN);
   return {
     name: EXPOSURE_TAB,
     rows: TAB_ROWS,
     columns: SOURCE_COLUMN + MAX_POSITIONS - 1,
     hidden: true,
     frozenRows: 4,
-    columnWidths: { A: 170, B: 150, C: 24, "D:M": 110, N: 24, O: 220, P: 260, "Q:T": 90, [`${first}:${last}`]: 110 },
+    columnWidths: {
+      A: 170,
+      B: 150,
+      C: 24,
+      "D:M": 110,
+      N: 24,
+      "O:R": 110,
+      S: 24,
+      T: 220,
+      U: 260,
+      [`V:${partColumn}`]: 90,
+      [`${x.first}:${x.last}`]: 110,
+    },
     cells: [
       { range: "A1:A2", values: [["Status"], ["Last run"]] },
-      {
-        range: "A4:A12",
-        values: [
-          ["measure"],
-          ["lineCount"],
-          ["top10Weight"],
-          ["hhi"],
-          ["effectiveCount"],
-          ["lookedThroughWeight"],
-          ["notLookedThroughWeight"],
-          ["weightSum"],
-          ["weightDifference"],
-        ],
-      },
+      { range: `A3:${VERSION_CELL}`, values: [["layoutVersion", LAYOUT_VERSION]] },
+      { range: "A4:A12", values: [["measure"], ...MEASURE_NAMES.map((name) => [name])] },
       { range: "B4", values: [["value"]] },
-      {
-        range: "D4:M4",
-        values: [
-          [
-            "id",
-            "ticker",
-            "reportDate",
-            "accessionNumber",
-            "holdingCount",
-            "weight",
-            "coveredWeight",
-            "mergedByTicker",
-            "mergedByLei",
-            "mergedByName",
-          ],
-        ],
-      },
-      { range: "O4:T4", values: [["key", "name", "ticker", "lei", "class", "weight"]] },
+      { range: "D4:M4", values: [FUND_FIELDS] },
+      { range: "O4:R4", values: [["firstId", "secondId", "overlap", "sharedLineCount"]] },
+      { range: `${lineFirst}4:${partColumn}4`, values: [[...LINE_FIELDS, "part"]] },
       { range: "A14:B14", values: [["runStart", "seconds"]] },
+      { range: "A26:B26", values: [["equity", "value"]] },
+      { range: "A27:A31", values: EQUITY_NAMES.map((name) => [name]) },
     ],
     styles: [
-      { range: `A4:${last}4`, bold: true, background: "#f7f6f1" },
+      { range: `A4:${x.last}4`, bold: true, background: "#f7f6f1" },
       { range: "A14:B14", bold: true, background: "#f7f6f1" },
+      { range: "A26:B26", bold: true, background: "#f7f6f1" },
       { range: "A15:A24", numberFormat: "yyyy-mm-dd hh:mm:ss" },
       { range: "B15:B24", numberFormat: "0.000" },
       { range: "B2", numberFormat: "yyyy-mm-dd hh:mm:ss" },
@@ -225,11 +414,19 @@ function exposureLayout() {
       { range: "B7", numberFormat: "0.0" },
       { range: "B8", numberFormat: "0.00" },
       { range: "B9:B12", numberFormat: "0.000000" },
+      { range: "B27", numberFormat: "0.000000" },
+      { range: "B28", numberFormat: "#,##0" },
+      { range: "B29", numberFormat: "0.000000" },
+      { range: "B30", numberFormat: "0.0" },
+      { range: "B31", numberFormat: "0.00" },
       { range: "F5:F", numberFormat: "yyyy-mm-dd" },
       { range: "H5:H", numberFormat: "#,##0" },
       { range: "I5:J", numberFormat: "0.00000" },
       { range: "K5:M", numberFormat: "#,##0" },
-      { range: `T5:${last}`, numberFormat: "0.00000" },
+      { range: "Q5:Q", numberFormat: "0.00000" },
+      { range: "R5:R", numberFormat: "#,##0" },
+      { range: `${x.weight}5:${x.stock}`, numberFormat: "0.00000" },
+      { range: `${x.first}5:${x.last}`, numberFormat: "0.00000" },
     ],
     conditional: [],
     validation: [],
@@ -237,151 +434,247 @@ function exposureLayout() {
 }
 
 /**
- * The layout of the tab Concentration. B15 holds the threshold, 1% by
- * default. A person can change it. B8 and B9 show the seconds of the last
- * good refresh and the average of the recorded refreshes.
+ * The layout of the tab Concentration. `inputs` holds the value of the
+ * threshold cell and of the overlap minimum cell, by the names of INPUTS. An
+ * absent name gets the value of INPUTS. A person can change both cells. B7
+ * and B8 show the seconds of the last good refresh and the average of the
+ * recorded refreshes.
  */
-function reportLayout() {
+function reportLayout(inputs = {}) {
+  const threshold = inputs.threshold === undefined ? INPUTS.threshold.value : inputs.threshold;
+  const overlapMinimum = inputs.overlapMinimum === undefined ? INPUTS.overlapMinimum.value : inputs.overlapMinimum;
+  const last = columnLetter(REPORT_COLUMNS);
+  const first = TABLE_ROW + 1;
+  const spill = `A${first}:${last}`;
   return {
     name: REPORT_TAB,
     rows: TAB_ROWS,
-    columns: 26,
+    columns: REPORT_COLUMNS,
     hidden: false,
     frozenRows: 1,
-    columnWidths: { A: 150, B: 300, C: 150, D: 175, E: 110, F: 180, G: 90, "H:K": 84 },
+    columnWidths: { A: 250, B: 300, C: 150, D: 175, E: 110, F: 180, [`G:${last}`]: 96 },
     cells: [
-      { range: "A1", values: [["Concentration"]] },
-      { range: "D1", values: [["Look-through exposure of the Holdings tab, by company."]] },
+      { range: "A1:B1", values: [["Concentration", "Your stock exposure by company, with a look inside each fund."]] },
       {
-        range: "A2:B7",
+        range: "D1",
         values: [
-          ["Status", "='Concentration.Exposure'!B1"],
-          ["Last run", "='Concentration.Exposure'!B2"],
-          ["Total value", TOTAL_FORMULA],
-          ["Looked through", "='Concentration.Exposure'!B9"],
-          ["Not looked through", "='Concentration.Exposure'!B10"],
           [
-            "Sum check",
-            `=IF(ISNUMBER('Concentration.Exposure'!B12),IF(ABS('Concentration.Exposure'!B12)<=0.005,"pass","fail"),"fail")`,
+            "A fund that holds other funds uses the newest report of each held fund. The date of a held report can differ from the date in this table.",
           ],
         ],
       },
       {
-        range: "A8:B9",
+        range: "A2:B8",
         values: [
+          ["Status", `=${exposure("B1")}`],
+          ["Last run", `=${exposure("B2")}`],
+          ["Total value", TOTAL_FORMULA],
+          ["Looked through", `=${measureCell("lookedThroughWeight")}`],
+          ["Not looked through", `=${measureCell("notLookedThroughWeight")}`],
           ["Last run time", RUN_LAST_FORMULA],
           ["Average (last 10)", RUN_AVERAGE_FORMULA],
         ],
       },
       { range: "D2:H2", values: [["Fund looked through", "Report date", "Holdings", "Weight", "Covered"]] },
-      { range: "D3", values: [[FUNDS_FORMULA]] },
+      { range: "D3", values: [[fundsFormula()]] },
       {
-        range: "A10:B13",
+        range: "A10:B15",
         values: [
-          ["Measures", ""],
-          ["Top 10 weight", "='Concentration.Exposure'!B6"],
-          ["HHI, 0 to 10,000", "='Concentration.Exposure'!B7"],
-          ["Effective holdings", "='Concentration.Exposure'!B8"],
+          ["Your stocks alone", ""],
+          ["Stocks, share of your portfolio", equityFormula("weight")],
+          ["Top 10 stocks, share of your stocks", equityFormula("top10Weight")],
+          ["HHI of your stocks, 0 to 10,000", equityFormula("hhi")],
+          ["Effective number of stocks", equityFormula("effectiveCount")],
+          [noStockFormula(), ""],
         ],
       },
       {
-        range: "D10:F13",
+        range: "A16:C19",
         values: [
           ["Composition", "Value", "% of portfolio"],
           [
-            '="Stocks at "&TEXT($B$15,"0.00%")&" or more"',
-            '=IF(ISNUMBER($B$4),F11*$B$4,"")',
-            `=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,"stock",'Concentration.Exposure'!$T$5:$T,">="&$B$15)`,
+            `="Stocks at "&TEXT($B$${THRESHOLD_ROW},"0.00%")&" or more"`,
+            '=IF(ISNUMBER($B$4),C17*$B$4,"")',
+            stockSumFormula(">="),
           ],
           [
-            '="Stocks under "&TEXT($B$15,"0.00%")',
-            '=IF(ISNUMBER($B$4),F12*$B$4,"")',
-            `=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,"stock",'Concentration.Exposure'!$T$5:$T,"<"&$B$15)`,
+            `="Stocks under "&TEXT($B$${THRESHOLD_ROW},"0.00%")`,
+            '=IF(ISNUMBER($B$4),C18*$B$4,"")',
+            stockSumFormula("<"),
           ],
+          ["Not stocks", '=IF(ISNUMBER($B$4),C19*$B$4,"")', otherSumFormula()],
+        ],
+      },
+      {
+        range: `A${THRESHOLD_ROW}:C${OVERLAP_ROW}`,
+        values: [
+          [INPUTS.threshold.label, threshold, "Type a percent. Each company whose stock is at or above it gets a row."],
           [
-            "Not individual stocks",
-            '=IF(ISNUMBER($B$4),F13*$B$4,"")',
-            `=SUMIFS('Concentration.Exposure'!$T$5:$T,'Concentration.Exposure'!$S$5:$S,"<>stock")`,
+            INPUTS.overlapMinimum.label,
+            overlapMinimum,
+            "Type a percent. The fund overlap list under the tables shows each pair of funds at or above it.",
           ],
         ],
       },
-      { range: "A15:C15", values: [["Threshold", 0.01, "Type a percent. Each company at or above it gets a row."]] },
-      { range: "A17:G17", values: [["Rank", "Company", "Ticker", "Value", "% of portfolio", "", "Direct"]] },
-      { range: "H17", values: [[fundHeaderFormula()]] },
-      { range: "A18", values: [[reportFormula()]] },
+      {
+        range: `A${TABLE_ROW - 1}`,
+        values: [["A commodity trust or a crypto trust, such as GLD or IBIT, counts as one stock."]],
+      },
+      {
+        range: `A${TABLE_ROW}:G${TABLE_ROW}`,
+        values: [["Rank", "Company", "Ticker", "Value", "% of portfolio", "", "Direct"]],
+      },
+      { range: `H${TABLE_ROW}`, values: [[fundHeaderFormula()]] },
+      { range: `A${first}`, values: [[reportFormula()]] },
     ],
     styles: [
       { range: "A1", bold: true, fontSize: 16 },
+      { range: "B1", color: "#6b6962", italic: true },
       { range: "D1", color: "#6b6962", italic: true },
-      { range: "A2:A13", color: "#57554f" },
+      { range: "A2:A19", color: "#57554f" },
       { range: "B3", numberFormat: "yyyy-mm-dd hh:mm" },
       { range: "B4", numberFormat: "$#,##0", bold: true },
       { range: "B5:B6", numberFormat: "0.00%" },
-      { range: "B8:B9", numberFormat: '0.0" s"' },
-      { range: "A10:F10", bold: true, background: "#f7f6f1", color: "#1d1c1a" },
-      { range: "B11", numberFormat: "0.00%" },
-      { range: "B12", numberFormat: "#,##0" },
-      { range: "B13", numberFormat: "0.0" },
-      { range: "E11:E13", numberFormat: "$#,##0" },
-      { range: "F11:F13", numberFormat: "0.00%" },
-      { range: "A15", bold: true },
-      { range: "B15", numberFormat: "0.00%", bold: true, background: "#fff4c7", align: "right" },
-      { range: "C15", color: "#6b6962", italic: true },
-      { range: "A17:K17", bold: true, background: "#f7f6f1" },
-      { range: "A17", align: "right" },
-      { range: "D17:K17", align: "right" },
-      { range: "A18:A", numberFormat: "0" },
-      { range: "D18:D", numberFormat: "$#,##0" },
-      { range: "E18:E", numberFormat: "0.00%" },
-      { range: "G18:K", numberFormat: '0.00%;-0.00%;""' },
-      { range: "F18:F", wrap: true },
-      { range: "B2:B9", align: "right" },
+      { range: "B7:B8", numberFormat: '0.0" s"' },
+      { range: "B2:B8", align: "right" },
+      { range: "A10:B10", bold: true, background: "#f7f6f1", color: "#1d1c1a" },
+      { range: "B11:B12", numberFormat: "0.00%" },
+      { range: "B13", numberFormat: "#,##0" },
+      { range: "B14", numberFormat: "0.0" },
+      { range: "A15", color: "#6b6962", italic: true },
+      { range: "A16:C16", bold: true, background: "#f7f6f1", color: "#1d1c1a" },
+      { range: "B16:C16", align: "right" },
+      { range: "B17:B19", numberFormat: "$#,##0" },
+      { range: "C17:C19", numberFormat: "0.00%" },
+      { range: `A${THRESHOLD_ROW}:A${OVERLAP_ROW}`, bold: true },
+      {
+        range: `B${THRESHOLD_ROW}:B${OVERLAP_ROW}`,
+        numberFormat: "0.00%",
+        bold: true,
+        background: "#fff4c7",
+        align: "right",
+      },
+      { range: `C${THRESHOLD_ROW}:C${OVERLAP_ROW}`, color: "#6b6962", italic: true },
+      { range: `A${TABLE_ROW - 1}`, color: "#6b6962", italic: true },
+      { range: `A${TABLE_ROW}:${last}${TABLE_ROW}`, bold: true, background: "#f7f6f1" },
+      { range: `A${TABLE_ROW}`, align: "right" },
+      { range: `D${TABLE_ROW}:${last}${TABLE_ROW}`, align: "right" },
+      { range: `A${first}:A`, numberFormat: "0" },
+      { range: `D${first}:D`, numberFormat: "$#,##0" },
+      { range: `E${first}:E`, numberFormat: "0.00%" },
+      { range: `F${first}:F`, numberFormat: "#,##0", wrap: true },
+      { range: `G${first}:${last}`, numberFormat: '0.00%;-0.00%;""' },
       { range: "D2:H2", bold: true, background: "#f7f6f1" },
-      { range: "D3:D9", bold: true },
-      { range: "E3:E9", numberFormat: "yyyy-mm-dd" },
-      { range: "F3:F9", numberFormat: "#,##0" },
-      { range: "G3:G9", numberFormat: "0.00%" },
-      { range: "H3:H9", numberFormat: "0.0%" },
+      { range: `D3:D${FUND_LAST_ROW}`, bold: true },
+      { range: `E3:E${FUND_LAST_ROW}`, numberFormat: "yyyy-mm-dd" },
+      { range: `F3:F${FUND_LAST_ROW}`, numberFormat: "#,##0" },
+      { range: `G3:G${FUND_LAST_ROW}`, numberFormat: "0.00%" },
+      { range: `H3:H${FUND_LAST_ROW}`, numberFormat: "0.0%" },
     ],
     conditional: [
       { range: "B2", formula: '=$B$2="OK"', background: "#dcefe2", color: "#1b5e34", bold: true },
       { range: "B2", formula: '=$B$2<>"OK"', background: "#f7d4d4", color: "#8a1c1c", bold: true },
-      { range: "B7", formula: '=$B$7="pass"', background: "#dcefe2", color: "#1b5e34", bold: true },
-      { range: "B7", formula: '=$B$7<>"pass"', background: "#f7d4d4", color: "#8a1c1c", bold: true },
       {
-        range: "A18:K",
-        formula: '=LEFT($B18,13)="Stocks under "',
+        range: spill,
+        formula: `=LEFT($B${first},13)="Stocks under "`,
         background: "#f4f3ee",
         color: "#3c3b37",
         italic: true,
       },
-      { range: "A18:K", formula: '=$B18="Not individual stocks"', bold: true },
-      { range: "A18:K", formula: '=$B18="Line"', bold: true, background: "#f7f6f1" },
-      { range: "A18:K", formula: '=$B18="Total of all lines"', bold: true },
-      { range: "B18:B", formula: "=AND(ISNUMBER($A18),N($G18)>0,SUM($H18:$K18)>0)", bold: true },
+      { range: spill, formula: `=OR($B${first}="Not stocks",$B${first}="Fund overlap")`, bold: true },
+      { range: spill, formula: `=OR($B${first}="Line",$B${first}="Fund 1")`, bold: true, background: "#f7f6f1" },
+      { range: spill, formula: `=$B${first}="Total of all lines"`, bold: true },
+      {
+        range: spill,
+        formula: `=OR($B${first}="${SUM_NOTE}",$B${first}="${OVERLAP_NOTE}")`,
+        color: "#6b6962",
+        italic: true,
+      },
+      {
+        range: `B${first}:B`,
+        formula: `=AND(ISNUMBER($A${first}),N($G${first})>0,SUM($H${first}:$${last}${first})>0)`,
+        bold: true,
+      },
     ],
-    validation: [{ range: "B15", min: 0, max: 1, message: "Type a percent from 0% to 100%, such as 1%." }],
+    validation: [
+      { range: `B${THRESHOLD_ROW}`, min: 0, max: 1, message: "Type a percent from 0% to 100%, such as 1%." },
+      { range: `B${OVERLAP_ROW}`, min: 0, max: 1, message: "Type a percent from 0% to 100%, such as 10%." },
+    ],
   };
 }
 
 /**
- * Create each tab of the report that is absent, from its layout. The function
- * creates Concentration.Exposure first, because the formulas of Concentration
- * read it. It leaves a tab that exists as it is, and it changes no other tab.
+ * The value of each cell of a report tab that the person types in, by the
+ * names of INPUTS. The function finds a cell by its label in column A, so it
+ * also reads a tab of another layout version. A name gets the value of INPUTS
+ * when the tab is absent, when no row holds the label, or when the cell holds
+ * no number from 0 to 1.
  */
-function ensureTabs(book) {
-  for (const layout of [exposureLayout(), reportLayout()]) {
-    if (book.getSheetByName(layout.name) === null) createTab(book, layout);
+function readInputs(report) {
+  const rows =
+    report === null || report.getMaxColumns() < 2
+      ? []
+      : report.getRange(1, 1, Math.min(INPUT_ROWS, report.getMaxRows()), 2).getValues();
+  const inputs = {};
+  for (const [name, input] of Object.entries(INPUTS)) {
+    const row = rows.find((cells) => cellText(cells[0]) === input.label);
+    const typed = row === undefined ? null : row[1];
+    inputs[name] = isNumber(typed) && typed >= 0 && typed <= 1 ? typed : input.value;
   }
+  return inputs;
 }
 
 /**
- * Add a tab at the end of the spreadsheet and apply its layout: the grid
- * size, the cells, the styles, the column widths, the frozen rows, the
- * conditional formats, the data validation, and the hidden flag.
+ * Make sure that the two tabs of the report hold the layout of this file.
+ *
+ * The function reads the layout version of Concentration.Exposure. When the
+ * version equals LAYOUT_VERSION and Concentration exists, both tabs stay as
+ * they are. When the version equals LAYOUT_VERSION and Concentration is
+ * absent, the function creates Concentration. In each other condition, such
+ * as an older version, no version, or no hidden tab, the function deletes
+ * each of the two tabs that exists and creates both from the layout. A new
+ * Concentration tab gets the threshold and the overlap minimum of the old
+ * one.
+ *
+ * The function creates Concentration.Exposure first, because the formulas of
+ * Concentration read it. It hides Concentration.Exposure last, because a
+ * spreadsheet must keep one visible tab through each step. It changes no
+ * other tab.
  */
-function createTab(book, layout) {
-  const sheet = book.insertSheet(layout.name, book.getNumSheets());
+function ensureTabs(book) {
+  const hidden = book.getSheetByName(EXPOSURE_TAB);
+  const report = book.getSheetByName(REPORT_TAB);
+  const current = hidden !== null && hidden.getRange(VERSION_CELL).getValue() === LAYOUT_VERSION;
+  if (current && report !== null) return;
+  const inputs = readInputs(report);
+  const made = current ? null : replaceTab(book, hidden, exposureLayout());
+  replaceTab(book, report, reportLayout(inputs));
+  if (made !== null) made.hideSheet();
+}
+
+/**
+ * Create a tab from its layout in the place of an old tab, and return the
+ * new tab. The function deletes the old tab first, and the new tab takes its
+ * position. When the old tab is null, the new tab goes to the end of the
+ * spreadsheet.
+ */
+function replaceTab(book, old, layout) {
+  let index = book.getNumSheets();
+  if (old !== null) {
+    index = old.getIndex() - 1;
+    book.deleteSheet(old);
+  }
+  return createTab(book, layout, index);
+}
+
+/**
+ * Add a tab at the given position of the spreadsheet, apply its layout, and
+ * return the tab. The layout holds the grid size, the cells, the styles, the
+ * column widths, the frozen rows, the conditional formats, and the data
+ * validation. The caller hides a tab with the hidden flag.
+ */
+function createTab(book, layout, index) {
+  const sheet = book.insertSheet(layout.name, index);
   sizeGrid(sheet, layout.rows, layout.columns);
   for (const cell of layout.cells) sheet.getRange(cell.range).setValues(cell.values);
   for (const style of layout.styles) applyStyle(sheet.getRange(style.range), style);
@@ -400,7 +693,7 @@ function createTab(book, layout) {
       .build();
     sheet.getRange(check.range).setDataValidation(rule);
   }
-  if (layout.hidden) sheet.hideSheet();
+  return sheet;
 }
 
 /**
