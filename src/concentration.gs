@@ -14,12 +14,25 @@
  * The user properties of each person hold the API key of that person. The
  * menu item Set API key writes it. The script does not use the script
  * properties, because all users of an add-on share them.
+ *
+ * The menu item Describe a fund opens a sidebar. In the sidebar, a person
+ * describes a holding that the route cannot look through as a mix of funds.
+ * The document properties of the spreadsheet hold each mix, so each editor
+ * of the spreadsheet can read it. The sidebar writes the document
+ * properties alone. The next refresh sends the mix as the parts of the
+ * position and writes it into the hidden tab.
  */
+
+/**
+ * The address of the fund routes. The fund route is this address and a
+ * ticker.
+ */
+const FUND_URL = "https://data.coopersbs.com/funds/v1/";
 
 /**
  * The address of the concentration route.
  */
-const ROUTE_URL = "https://data.coopersbs.com/funds/v1/concentration";
+const ROUTE_URL = `${FUND_URL}concentration`;
 
 /**
  * The tab that the script reads. Tiller fills it.
@@ -45,6 +58,38 @@ const HANDLER = "refreshConcentration";
  * The function that the menu item Set API key runs.
  */
 const KEY_HANDLER = "setApiKey";
+
+/**
+ * The function that the menu item Describe a fund runs.
+ */
+const MIX_HANDLER = "showMixSidebar";
+
+/**
+ * The HTML file of the sidebar, with no extension.
+ */
+const SIDEBAR_FILE = "sidebar";
+
+/**
+ * The start of the name of each document property that holds a fund mix.
+ * The rest of the name is the key of the holding: its Symbol, or its
+ * Description when the Symbol is empty, as buildPositions makes it. The
+ * value is JSON: the entry date `entered` as yyyy-mm-dd, and `parts`, a list
+ * of 1 to MAX_PARTS elements with a `ticker`, a `percent` of the holding,
+ * and a `substitute` flag.
+ */
+const MIX_PREFIX = "FUND_MIX:";
+
+/**
+ * The largest count of funds in one mix. The route accepts 20 parts for each
+ * position.
+ */
+const MAX_PARTS = 20;
+
+/**
+ * The amount that the percents of a mix can add above 100 and stay valid.
+ * The route accepts a sum of part weights up to 1 + 1e-9.
+ */
+const PERCENT_TOLERANCE = 1e-7;
 
 /**
  * The characters that an API key can hold. A key with another character,
@@ -75,7 +120,8 @@ const TICKER_PATTERN = /^[A-Z0-9][A-Z0-9.-]{0,11}$/;
 const HOLDINGS_COLUMNS = ["Description", "Symbol", "Value"];
 
 /**
- * The measures of the answer, in the order of the rows B5:B12.
+ * The measures of the answer, in the order of the rows B5:B13. An answer
+ * with no unknownWeight leaves B13 empty.
  */
 const MEASURE_NAMES = [
   "lineCount",
@@ -86,6 +132,7 @@ const MEASURE_NAMES = [
   "notLookedThroughWeight",
   "weightSum",
   "weightDifference",
+  "unknownWeight",
 ];
 
 /**
@@ -96,7 +143,9 @@ const EQUITY_NAMES = ["weight", "lineCount", "top10Weight", "hhi", "effectiveCou
 
 /**
  * The fields of each element of the funds block, in the order of the columns
- * D:M.
+ * D:N. An element of a fund in a mix holds the position id, the ticker of the
+ * fund, and its share of the position in partWeight. Each other element
+ * holds no partWeight.
  */
 const FUND_FIELDS = [
   "id",
@@ -109,11 +158,20 @@ const FUND_FIELDS = [
   "mergedByTicker",
   "mergedByLei",
   "mergedByName",
+  "partWeight",
 ];
 
 /**
- * The fields of each line, in the order of the columns T:Z. Column AA holds
- * the part of the line that the row gives: STOCK_PART or OTHER_PART.
+ * The fields of the mix block, in the order of the columns U:Z. Each fund of
+ * a mix that the request sent gets one row: the position id, the weight of
+ * the position, the entry date of the mix as a date serial number, the
+ * ticker of the fund, its share of the position, and the substitute flag.
+ */
+const MIX_FIELDS = ["mixId", "mixWeight", "entered", "partTicker", "partWeight", "substitute"];
+
+/**
+ * The fields of each line, in the order of the columns AB:AH. Column AI
+ * holds the part of the line that the row gives: STOCK_PART or OTHER_PART.
  */
 const LINE_FIELDS = ["key", "name", "ticker", "lei", "class", "weight", "stockWeight"];
 
@@ -143,23 +201,34 @@ const FIRST_DATA_ROW = 5;
 const FUND_COLUMN = 4;
 
 /**
- * The first column of the overlaps block, O. The block holds the two position
- * ids, the overlap, and the count of shared lines of each pair, in O:R.
+ * The count of columns of the overlaps block.
  */
-const OVERLAP_COLUMN = 15;
+const OVERLAP_WIDTH = 4;
 
 /**
- * The first column of the lines block, T.
+ * The first column of the overlaps block, P. The block holds the two position
+ * ids, the overlap, and the count of shared lines of each pair, in P:S. One
+ * empty column separates each block from the next.
  */
-const LINE_COLUMN = 20;
+const OVERLAP_COLUMN = FUND_COLUMN + FUND_FIELDS.length + 1;
 
 /**
- * The column of the part name of each row of the lines block, AA.
+ * The first column of the mix block, U.
+ */
+const MIX_COLUMN = OVERLAP_COLUMN + OVERLAP_WIDTH + 1;
+
+/**
+ * The first column of the lines block, AB.
+ */
+const LINE_COLUMN = MIX_COLUMN + MIX_FIELDS.length + 1;
+
+/**
+ * The column of the part name of each row of the lines block, AI.
  */
 const PART_COLUMN = LINE_COLUMN + LINE_FIELDS.length;
 
 /**
- * The first column of the sources block, AB. Each position gets one column.
+ * The first column of the sources block, AJ. Each position gets one column.
  */
 const SOURCE_COLUMN = PART_COLUMN + 1;
 
@@ -183,13 +252,19 @@ const RUN_LIMIT = 10;
 const EQUITY_HEADER_ROW = 26;
 
 /**
- * Add the items Refresh and Set API key to the add-on menu. The add-on menu
- * is under Extensions, with the name of the add-on. The spreadsheet runs this
- * function when a person opens it. The function reads no property and no
- * tab, so it also works before the person gives access.
+ * Add the items Refresh, Describe a fund, and Set API key to the add-on menu.
+ * The add-on menu is under Extensions, with the name of the add-on. The
+ * spreadsheet runs this function when a person opens it. The function reads
+ * no property and no tab, and it opens no dialog, so it also works before
+ * the person gives access.
  */
 function onOpen() {
-  SpreadsheetApp.getUi().createAddonMenu().addItem("Refresh", HANDLER).addItem("Set API key", KEY_HANDLER).addToUi();
+  SpreadsheetApp.getUi()
+    .createAddonMenu()
+    .addItem("Refresh", HANDLER)
+    .addItem("Describe a fund", MIX_HANDLER)
+    .addItem("Set API key", KEY_HANDLER)
+    .addToUi();
 }
 
 /**
@@ -272,7 +347,8 @@ function runRefresh() {
     writeStatus(out, `FAULT: no ${HOLDINGS_TAB} column ${missingColumns(rows.length > 0 ? rows[0] : []).join(", ")}`);
     return;
   }
-  const positions = buildPositions(rows.slice(1), columns);
+  const mixes = readMixes();
+  const positions = buildPositions(rows.slice(1), columns, mixes);
   if (positions.length === 0) {
     writeStatus(out, "FAULT: no positions");
     return;
@@ -311,7 +387,7 @@ function runRefresh() {
     return;
   }
   const ids = positions.map((position) => position.id);
-  writeAnswer(out, ids, answer);
+  writeAnswer(out, ids, answer, mixRows(positions, mixes));
   writeStatus(out, "OK");
   SpreadsheetApp.flush();
   recordRun(out, started, (Date.now() - started.getTime()) / 1000);
@@ -353,43 +429,78 @@ function missingColumns(header) {
 
 /**
  * The ticker that the request sends for a symbol, or null. The function
- * applies the ticker normalization of the route to a copy of the symbol. A symbol that fails the pattern gives null, so the
- * position goes with no ticker and the route does not refuse the body.
+ * applies the ticker normalization of the route to a copy of the symbol. A
+ * symbol that fails the pattern gives null, so the position goes with no
+ * ticker and the route does not refuse the body.
  */
 function tickerOf(symbol) {
   if (symbol === "") return null;
-  const normal = symbol.replace(/^\$/, "").toUpperCase();
-  return TICKER_PATTERN.test(normal) ? symbol : null;
+  return normalTicker(symbol) === null ? null : symbol;
+}
+
+/**
+ * The ticker of a value in the normalized form of the route, or null. The
+ * function removes the white space at the two ends and one leading `$`, and
+ * it changes each letter to upper case. A result that fails the ticker
+ * pattern gives null.
+ */
+function normalTicker(value) {
+  const normal = cellText(value).replace(/^\$/, "").toUpperCase();
+  return TICKER_PATTERN.test(normal) ? normal : null;
+}
+
+/**
+ * The holdings of the rows of the Holdings tab, one for each key, in the
+ * order of the first row of each key.
+ *
+ * The key of a row is its Symbol, or its Description when the Symbol is
+ * empty, cut to 64 UTF-16 code units. The function skips a row with an empty
+ * key or a Value that is not a finite number. It adds the values of each key.
+ * Each holding holds the key in `id`, the Symbol and the Description of the
+ * first row of the key, and the sum of the values.
+ */
+function holdingGroups(rows, columns) {
+  const groups = new Map();
+  for (const row of rows) {
+    const symbol = cellText(row[columns.symbol]);
+    const description = cellText(row[columns.description]);
+    const key = (symbol !== "" ? symbol : description).slice(0, MAX_ID_LENGTH);
+    const value = row[columns.value];
+    if (key === "" || typeof value !== "number" || !isFinite(value)) continue;
+    if (!groups.has(key)) groups.set(key, { id: key, symbol, description, sum: 0 });
+    groups.get(key).sum += value;
+  }
+  return [...groups.values()];
 }
 
 /**
  * The positions of the request, in the order of the first row of each key.
  *
- * The key of a row is its Symbol, or its Description when the Symbol is
- * empty, cut to 64 UTF-16 code units. The function skips a row with an empty
- * key or a Value that is not a finite number. It adds the values of each key.
- * The first row of a key decides whether the position has a ticker. A key
- * with a sum that is not above 0 gives no position, because the route accepts
- * a weight above 0 alone. Each weight is the sum of the key divided by the
- * total of the kept keys. A position holds `id`, `ticker` when the key has
- * one, and `weight`. It holds no value, no share count, no account, and no
- * total. The result is empty when no key has a sum above 0.
+ * holdingGroups gives the keys and their sums. A key with a sum that is not
+ * above 0 gives no position, because the route accepts a weight above 0
+ * alone. Each weight is the sum of the key divided by the total of the kept
+ * keys. A position holds `id`, `ticker` when the key has one, and `weight`.
+ * The first row of a key decides whether the position has a ticker.
+ *
+ * A key with a mix in `mixes` gives a position with `id`, `weight`, and
+ * `parts`, and no ticker. Each part holds the ticker of a fund of the mix
+ * and its share of the position: the percent divided by 100.
+ *
+ * A position holds no value, no share count, no account, and no total. The
+ * result is empty when no key has a sum above 0.
  */
-function buildPositions(rows, columns) {
-  const groups = new Map();
-  for (const row of rows) {
-    const symbol = cellText(row[columns.symbol]);
-    const key = (symbol !== "" ? symbol : cellText(row[columns.description])).slice(0, MAX_ID_LENGTH);
-    const value = row[columns.value];
-    if (key === "" || typeof value !== "number" || !isFinite(value)) continue;
-    if (!groups.has(key)) groups.set(key, { id: key, symbol, sum: 0 });
-    groups.get(key).sum += value;
-  }
-  const kept = [...groups.values()].filter((group) => group.sum > 0);
+function buildPositions(rows, columns, mixes = new Map()) {
+  const kept = holdingGroups(rows, columns).filter((group) => group.sum > 0);
   const total = kept.reduce((sum, group) => sum + group.sum, 0);
   if (!(total > 0)) return [];
   return kept.map((group) => {
     const position = { id: group.id };
+    const mix = mixes.get(group.id);
+    if (mix !== undefined) {
+      position.weight = group.sum / total;
+      position.parts = mix.parts.map((part) => ({ ticker: part.ticker, weight: part.percent / 100 }));
+      return position;
+    }
     const ticker = tickerOf(group.symbol);
     if (ticker !== null) position.ticker = ticker;
     position.weight = group.sum / total;
@@ -398,19 +509,132 @@ function buildPositions(rows, columns) {
 }
 
 /**
- * The status text of an answer with a status other than 200. A JSON body in
- * the error format of the route adds its error code, such as
- * `FAULT: 429 rate_limited`. Another body gives the
- * status alone, such as `FAULT: 502`.
+ * The text of a problem of the funds of a mix, or an empty string when the
+ * mix is valid. Each fund holds a ticker in the normalized form, a percent
+ * above 0 and up to 100, and a substitute flag. A mix holds 1 to MAX_PARTS
+ * funds, no ticker two times, and a total of 100 or less. The sidebar shows
+ * the text to the person.
  */
-function faultText(status, text) {
-  let code = "";
+function mixProblem(parts) {
+  if (!Array.isArray(parts) || parts.length === 0) return "Add at least one fund.";
+  if (parts.length > MAX_PARTS) return `A mix can hold ${MAX_PARTS} funds at most.`;
+  const seen = new Set();
+  let total = 0;
+  for (const part of parts) {
+    if (part === null || typeof part !== "object") return "Each row needs a ticker and a percent.";
+    if (typeof part.ticker !== "string" || part.ticker === "") return "Type a ticker in each row.";
+    if (normalTicker(part.ticker) !== part.ticker) return `Check the ticker ${JSON.stringify(part.ticker)}.`;
+    if (seen.has(part.ticker)) return `${part.ticker} is in the mix two times.`;
+    seen.add(part.ticker);
+    if (!isNumber(part.percent) || part.percent <= 0 || part.percent > 100) {
+      return `Give ${part.ticker} a percent above 0 and up to 100.`;
+    }
+    if (typeof part.substitute !== "boolean") return "Each row needs a substitute box.";
+    total += part.percent;
+  }
+  if (total > 100 + PERCENT_TOLERANCE) return "The total is over 100%. Lower a percent to save.";
+  return "";
+}
+
+/**
+ * True when the value is a date text of the form yyyy-mm-dd that names a
+ * real day.
+ */
+function isDay(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/**
+ * The date serial number of a day of the form yyyy-mm-dd: the count of days
+ * after 1899-12-30, the day 0 of Google Sheets.
+ */
+function daySerial(day) {
+  const [year, month, date] = day.split("-").map(Number);
+  return Date.UTC(year, month - 1, date) / 86400000 + 25569;
+}
+
+/**
+ * The mix of the JSON text of a document property, or null. The result
+ * holds the entry date and the funds. The result is null when the text is
+ * not JSON, when the entry date is not a day, or when mixProblem finds a
+ * problem.
+ */
+function parseMix(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || !isDay(value.entered)) return null;
+  if (mixProblem(value.parts) !== "") return null;
+  const parts = value.parts.map((part) => ({
+    ticker: part.ticker,
+    percent: part.percent,
+    substitute: part.substitute,
+  }));
+  return { entered: value.entered, parts };
+}
+
+/**
+ * The valid mixes of the document properties, by the key of the holding. A
+ * property with a name that does not start with MIX_PREFIX is not a mix. The
+ * function skips a value that parseMix refuses.
+ */
+function readMixes() {
+  const mixes = new Map();
+  const properties = PropertiesService.getDocumentProperties().getProperties();
+  for (const [name, text] of Object.entries(properties)) {
+    if (!name.startsWith(MIX_PREFIX)) continue;
+    const mix = parseMix(text);
+    if (mix !== null) mixes.set(name.slice(MIX_PREFIX.length), mix);
+  }
+  return mixes;
+}
+
+/**
+ * The rows of the mix block for the positions of a request: one row for
+ * each part of each position that holds parts, in the order of the request.
+ * A row holds the fields of MIX_FIELDS.
+ */
+function mixRows(positions, mixes) {
+  const rows = [];
+  for (const position of positions) {
+    if (!Array.isArray(position.parts)) continue;
+    const mix = mixes.get(position.id);
+    const entered = daySerial(mix.entered);
+    position.parts.forEach((part, i) => {
+      rows.push([position.id, position.weight, entered, part.ticker, part.weight, mix.parts[i].substitute]);
+    });
+  }
+  return rows;
+}
+
+/**
+ * The error code of a body in the error format of the route, or an empty
+ * string.
+ */
+function errorCode(text) {
   try {
     const body = JSON.parse(text);
-    if (body && body.error && typeof body.error.code === "string") code = body.error.code;
+    if (body && body.error && typeof body.error.code === "string") return body.error.code;
   } catch {
-    code = "";
+    return "";
   }
+  return "";
+}
+
+/**
+ * The status text of an answer with a status other than 200. A JSON body in
+ * the error format of the route adds its error code, such as
+ * `FAULT: 429 rate_limited`. Another body gives the status alone, such as
+ * `FAULT: 502`.
+ */
+function faultText(status, text) {
+  const code = errorCode(text);
   return code === "" ? `FAULT: ${status}` : `FAULT: ${status} ${code}`;
 }
 
@@ -449,7 +673,7 @@ function cellValue(value) {
 }
 
 /**
- * The rows B5:B12: one row for each measure, in the order of MEASURE_NAMES.
+ * The rows B5:B13: one row for each measure, in the order of MEASURE_NAMES.
  */
 function measureRows(measures) {
   return MEASURE_NAMES.map((name) => [cellValue(measures[name])]);
@@ -466,7 +690,7 @@ function equityRows(equity) {
 }
 
 /**
- * The rows D5:M: one row for each element of the funds block, with the
+ * The rows D5:N: one row for each element of the funds block, with the
  * fields of FUND_FIELDS.
  */
 function fundRows(funds) {
@@ -474,7 +698,7 @@ function fundRows(funds) {
 }
 
 /**
- * The rows O5:R: one row for each element of the overlaps block, in the order
+ * The rows P5:S: one row for each element of the overlaps block, in the order
  * of the answer. A row holds the two position ids, the overlap, and the count
  * of shared lines.
  */
@@ -495,7 +719,7 @@ function sourceOf(map, id) {
 }
 
 /**
- * The rows from T5: the lines block and the sources block together. A line
+ * The rows from AB5: the lines block and the sources block together. A line
  * gives one row for its stock part, one row for its other part, or both, in
  * the order of the answer. A row holds the fields of LINE_FIELDS, then the
  * part name, then one cell for each position id in the order of the request.
@@ -566,9 +790,9 @@ function growGrid(sheet, rows, columns) {
 }
 
 /**
- * Set the number format `@` on the text columns: D:E, G, O:P, and T:W from
- * row 5, and row 4 from column AB. A name that starts with `=`, `+`, `-`, or
- * `@` then stays text, and a ticker such as 0700 stays text.
+ * Set the number format `@` on the text columns: D:E, G, P:Q, U, X, and
+ * AB:AE from row 5, and row 4 from column AJ. A name that starts with `=`,
+ * `+`, `-`, or `@` then stays text, and a ticker such as 0700 stays text.
  */
 function setTextFormat(sheet) {
   const dataRows = sheet.getMaxRows() - HEADER_ROW;
@@ -576,6 +800,8 @@ function setTextFormat(sheet) {
   sheet.getRange(FIRST_DATA_ROW, FUND_COLUMN, dataRows, 2).setNumberFormat("@");
   sheet.getRange(FIRST_DATA_ROW, FUND_COLUMN + 3, dataRows, 1).setNumberFormat("@");
   sheet.getRange(FIRST_DATA_ROW, OVERLAP_COLUMN, dataRows, 2).setNumberFormat("@");
+  sheet.getRange(FIRST_DATA_ROW, MIX_COLUMN, dataRows, 1).setNumberFormat("@");
+  sheet.getRange(FIRST_DATA_ROW, MIX_COLUMN + 3, dataRows, 1).setNumberFormat("@");
   sheet.getRange(FIRST_DATA_ROW, LINE_COLUMN, dataRows, 4).setNumberFormat("@");
   sheet.getRange(HEADER_ROW, SOURCE_COLUMN, 1, lastColumn - SOURCE_COLUMN + 1).setNumberFormat("@");
 }
@@ -597,14 +823,15 @@ function placeBlock(grid, row, column, values) {
  * rows of the lines and the positions, and sets the text format. Then it
  * writes the range from B4 to the last column and the last row of the grid
  * with one setValues call. The range holds the labels of row 4, the position
- * ids, the measures, the equity measures, the funds, the overlaps, the lines,
- * and the sources. It also holds column B of the run-time block and of the
- * header of the equity block, and the function copies those cells as they
- * are. Each other cell gets an empty string, so no cell of the last answer
- * stays. One call replaces the whole answer, so a report formula never reads
- * an empty block.
+ * ids, the measures, the equity measures, the funds, the overlaps, the rows
+ * of the mix block, the lines, and the sources. It also holds column B of the
+ * run-time block and of the header of the equity block, and the function
+ * copies those cells as they are. Each other cell gets an empty string, so
+ * no cell of the last answer stays. One call replaces the whole answer, so a
+ * report formula never reads an empty block. `mixes` holds the rows of the
+ * mix block that mixRows gives.
  */
-function writeAnswer(sheet, ids, answer) {
+function writeAnswer(sheet, ids, answer, mixes = []) {
   const funds = fundRows(answer.funds);
   const overlaps = overlapRows(answer.overlaps);
   const parts = partRows(answer.lines, ids);
@@ -612,6 +839,7 @@ function writeAnswer(sheet, ids, answer) {
     EQUITY_HEADER_ROW + EQUITY_NAMES.length,
     HEADER_ROW + funds.length,
     HEADER_ROW + overlaps.length,
+    HEADER_ROW + mixes.length,
     HEADER_ROW + parts.length,
   );
   growGrid(sheet, lastRow, SOURCE_COLUMN - 1 + ids.length);
@@ -629,7 +857,207 @@ function writeAnswer(sheet, ids, answer) {
   placeBlock(grid, EQUITY_HEADER_ROW + 1, 2, equityRows(answer.measures.equity));
   placeBlock(grid, FIRST_DATA_ROW, FUND_COLUMN, funds);
   placeBlock(grid, FIRST_DATA_ROW, OVERLAP_COLUMN, overlaps);
+  placeBlock(grid, FIRST_DATA_ROW, MIX_COLUMN, mixes);
   placeBlock(grid, FIRST_DATA_ROW, LINE_COLUMN, parts);
   setTextFormat(sheet);
   sheet.getRange(HEADER_ROW, 2, rows, width).setValues(grid);
+}
+
+/**
+ * Open the sidebar of the menu item Describe a fund. The sidebar reads and
+ * writes the mixes through the functions below. It writes no cell.
+ */
+function showMixSidebar() {
+  const page = HtmlService.createHtmlOutputFromFile(SIDEBAR_FILE).setTitle("Describe a fund");
+  SpreadsheetApp.getUi().showSidebar(page);
+}
+
+/**
+ * The holdings of the Holdings tab with a sum above 0, as holdingGroups gives
+ * them. The result is empty when the tab or one of its three columns is
+ * absent.
+ */
+function readHoldingGroups(book) {
+  const holdings = book.getSheetByName(HOLDINGS_TAB);
+  if (holdings === null) return [];
+  const rows = holdings.getDataRange().getValues();
+  const columns = findColumns(rows.length > 0 ? rows[0] : []);
+  if (columns === null) return [];
+  return holdingGroups(rows.slice(1), columns).filter((group) => group.sum > 0);
+}
+
+/**
+ * The ids of the positions of the last good answer that gave weight to a line
+ * of the class unknown. The function reads the hidden tab. The result is
+ * empty when the tab is absent or holds another layout version.
+ */
+function unknownIds(book) {
+  const found = new Set();
+  const sheet = book.getSheetByName(EXPOSURE_TAB);
+  if (sheet === null || sheet.getRange(VERSION_CELL).getValue() !== LAYOUT_VERSION) return found;
+  const width = Math.min(MAX_POSITIONS, sheet.getMaxColumns() - SOURCE_COLUMN + 1);
+  const ids = sheet.getRange(HEADER_ROW, SOURCE_COLUMN, 1, width).getValues()[0];
+  const rows = sheet
+    .getRange(FIRST_DATA_ROW, LINE_COLUMN, sheet.getMaxRows() - HEADER_ROW, SOURCE_COLUMN - LINE_COLUMN + width)
+    .getValues();
+  const classAt = LINE_FIELDS.indexOf("class");
+  const partAt = LINE_FIELDS.length;
+  for (const row of rows) {
+    if (row[classAt] !== "unknown" || row[partAt] !== OTHER_PART) continue;
+    ids.forEach((id, i) => {
+      const value = row[partAt + 1 + i];
+      if (id !== "" && isNumber(value) && value > 0) found.add(id);
+    });
+  }
+  return found;
+}
+
+/**
+ * The text that the sidebar shows for a holding: the Symbol and the
+ * Description, or the key alone.
+ */
+function holdingLabel(group) {
+  if (group.symbol === "" || group.description === "" || group.description === group.symbol) return group.id;
+  return `${group.symbol} – ${group.description}`;
+}
+
+/**
+ * The data of the sidebar. `holdings` holds each holding of the Holdings tab
+ * that the last good answer could not look through, and each holding with a
+ * mix, with its mix or null. `others` holds each holding with no mix, so a
+ * person can link a saved mix to it. `orphans` holds each saved mix whose
+ * key matches no holding of the Holdings tab.
+ */
+function mixSidebarData() {
+  const book = SpreadsheetApp.getActiveSpreadsheet();
+  const groups = readHoldingGroups(book);
+  const mixes = readMixes();
+  const unknown = unknownIds(book);
+  const keys = new Set(groups.map((group) => group.id));
+  return {
+    holdings: groups
+      .filter((group) => mixes.has(group.id) || unknown.has(group.id))
+      .map((group) => ({ key: group.id, label: holdingLabel(group), mix: mixes.get(group.id) || null })),
+    others: groups
+      .filter((group) => !mixes.has(group.id))
+      .map((group) => ({ key: group.id, label: holdingLabel(group) })),
+    orphans: [...mixes.entries()].filter(([key]) => !keys.has(key)).map(([key, mix]) => ({ key, mix })),
+  };
+}
+
+/**
+ * The day of today in the time zone of the spreadsheet, as yyyy-mm-dd.
+ */
+function today(book) {
+  return Utilities.formatDate(new Date(), book.getSpreadsheetTimeZone(), "yyyy-MM-dd");
+}
+
+/**
+ * Save the mix of a holding in the document properties, with the entry date
+ * of today. `rows` holds a ticker, a percent, and a substitute flag for each
+ * fund. The function normalizes each ticker. It refuses a key that names no
+ * holding of the Holdings tab, and a mix that mixProblem refuses. The result
+ * holds `ok`, the text for the person, and the new sidebar data.
+ */
+function saveMix(key, rows) {
+  const book = SpreadsheetApp.getActiveSpreadsheet();
+  const id = cellText(key);
+  if (!readHoldingGroups(book).some((group) => group.id === id)) {
+    return { ok: false, text: "This holding is not on your Holdings tab." };
+  }
+  const parts = (Array.isArray(rows) ? rows : []).map((row) => {
+    const cells = row !== null && typeof row === "object" ? row : {};
+    const ticker = normalTicker(cells.ticker);
+    const percent = typeof cells.percent === "number" ? cells.percent : Number(cellText(cells.percent));
+    return {
+      ticker: ticker === null ? cellText(cells.ticker) : ticker,
+      percent,
+      substitute: cells.substitute === true,
+    };
+  });
+  const problem = mixProblem(parts);
+  if (problem !== "") return { ok: false, text: problem };
+  const value = JSON.stringify({ entered: today(book), parts });
+  PropertiesService.getDocumentProperties().setProperty(MIX_PREFIX + id, value);
+  return { ok: true, text: "Saved. Choose Refresh to update your report.", data: mixSidebarData() };
+}
+
+/**
+ * Delete the saved mix of a key. The result holds the text for the person
+ * and the new sidebar data.
+ */
+function deleteMix(key) {
+  PropertiesService.getDocumentProperties().deleteProperty(MIX_PREFIX + cellText(key));
+  return { ok: true, text: "The mix is deleted. Choose Refresh to update your report.", data: mixSidebarData() };
+}
+
+/**
+ * Move a saved mix from one key to a holding of the Holdings tab. The mix
+ * keeps its entry date. The function refuses a key with no valid mix, a
+ * target that is not a holding, and a target with a mix.
+ */
+function linkMix(fromKey, toKey) {
+  const book = SpreadsheetApp.getActiveSpreadsheet();
+  const store = PropertiesService.getDocumentProperties();
+  const from = cellText(fromKey);
+  const to = cellText(toKey);
+  const text = store.getProperty(MIX_PREFIX + from);
+  if (text === null || parseMix(text) === null) return { ok: false, text: "We can't find this mix." };
+  if (!readHoldingGroups(book).some((group) => group.id === to)) {
+    return { ok: false, text: "Pick a holding from your Holdings tab." };
+  }
+  if (store.getProperty(MIX_PREFIX + to) !== null) return { ok: false, text: "That holding has a mix already." };
+  store.setProperty(MIX_PREFIX + to, text);
+  store.deleteProperty(MIX_PREFIX + from);
+  return { ok: true, text: "Linked. Choose Refresh to update your report.", data: mixSidebarData() };
+}
+
+/**
+ * The name of the fund of a ticker, for the sidebar. The function sends one
+ * request to the fund route with the key of the person. The result holds
+ * `ok`, the normalized ticker, and the text for the person: the fund name, a
+ * note that the ticker is a company stock, or a note that the service does
+ * not know the ticker. A text that is not a ticker sends no request.
+ */
+function lookupFund(ticker) {
+  const normal = normalTicker(ticker);
+  if (normal === null) return { ok: false, ticker: cellText(ticker), text: "This is not a ticker." };
+  const key = String(PropertiesService.getUserProperties().getProperty(KEY_PROPERTY) || "").trim();
+  const later = "We couldn't check this ticker right now. You can still save it.";
+  if (key === "") {
+    return {
+      ok: false,
+      ticker: normal,
+      text: "Set your key first: Extensions › Holdings Concentration for Tiller › Set API key.",
+    };
+  }
+  let response;
+  try {
+    response = UrlFetchApp.fetch(FUND_URL + normal, {
+      method: "get",
+      headers: { Authorization: "Bearer " + key },
+      muteHttpExceptions: true,
+    });
+  } catch {
+    return { ok: false, ticker: normal, text: later };
+  }
+  const status = response.getResponseCode();
+  const text = response.getContentText();
+  if (status === 200) {
+    let name = "";
+    try {
+      const body = JSON.parse(text);
+      if (body && body.fund && typeof body.fund.seriesName === "string") name = body.fund.seriesName.trim();
+    } catch {
+      name = "";
+    }
+    return { ok: true, ticker: normal, text: name === "" ? normal : name };
+  }
+  const code = errorCode(text);
+  if (status === 404 && code === "not_a_fund") {
+    return { ok: true, ticker: normal, text: "A company stock. It counts as that stock." };
+  }
+  if (status === 404 && code === "fund_not_found")
+    return { ok: false, ticker: normal, text: "We don't know this ticker." };
+  return { ok: false, ticker: normal, text: later };
 }

@@ -1,6 +1,6 @@
 {
   "tab": "Concentration.Exposure",
-  "note": "The answer of the concentration route. B3 holds the layout version. The script writes B1, B2, B5:B12, B27:B31, D5:M, O5:R, the rows of the lines from T5, and one source column for each position from column AB, with the position id in row 4. A line gives one row for its stock part, one row for its other part, or both, and column AA names the part. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. This file writes the layout version, the labels, and the format alone. The tab holds no formula and no dollar value.",
+  "note": "The answer of the concentration route. B3 holds the layout version. The script writes B1, B2, B5:B13, B27:B31, D5:N, P5:S, the mix block U5:Z, the rows of the lines from AB5, and one source column for each position from column AJ, with the position id in row 4. A line gives one row for its stock part, one row for its other part, or both, and column AI names the part. The mix block holds one row for each fund of each mix that the request sent. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. This file writes the layout version, the labels, and the format alone. The tab holds no formula and no dollar value.",
   "cells": [
     {
       "range": "A1:A2",
@@ -8,10 +8,10 @@
     },
     {
       "range": "A3:B3",
-      "values": [["layoutVersion", 1]]
+      "values": [["layoutVersion", 2]]
     },
     {
-      "range": "A4:A12",
+      "range": "A4:A13",
       "values": [
         ["measure"],
         ["lineCount"],
@@ -21,7 +21,8 @@
         ["lookedThroughWeight"],
         ["notLookedThroughWeight"],
         ["weightSum"],
-        ["weightDifference"]
+        ["weightDifference"],
+        ["unknownWeight"]
       ]
     },
     {
@@ -29,7 +30,7 @@
       "values": [["value"]]
     },
     {
-      "range": "D4:M4",
+      "range": "D4:N4",
       "values": [
         [
           "id",
@@ -41,16 +42,21 @@
           "coveredWeight",
           "mergedByTicker",
           "mergedByLei",
-          "mergedByName"
+          "mergedByName",
+          "partWeight"
         ]
       ]
     },
     {
-      "range": "O4:R4",
+      "range": "P4:S4",
       "values": [["firstId", "secondId", "overlap", "sharedLineCount"]]
     },
     {
-      "range": "T4:AA4",
+      "range": "U4:Z4",
+      "values": [["mixId", "mixWeight", "entered", "partTicker", "partWeight", "substitute"]]
+    },
+    {
+      "range": "AB4:AI4",
       "values": [["key", "name", "ticker", "lei", "class", "weight", "stockWeight", "part"]]
     },
     {
@@ -68,24 +74,26 @@
   ],
   "format": {
     "hidden": true,
-    "columns": 227,
+    "columns": 235,
     "frozenRows": 4,
     "columnWidths": {
       "A": 170,
       "B": 150,
       "C": 24,
-      "D:M": 110,
-      "N": 24,
-      "O:R": 110,
-      "S": 24,
-      "T": 220,
-      "U": 260,
-      "V:AA": 90,
-      "AB:HS": 110
+      "D:N": 110,
+      "O": 24,
+      "P:S": 110,
+      "T": 24,
+      "U:Z": 110,
+      "AA": 24,
+      "AB": 220,
+      "AC": 260,
+      "AD:AI": 90,
+      "AJ:IA": 110
     },
     "cells": [
       {
-        "range": "A4:HS4",
+        "range": "A4:IA4",
         "bold": true,
         "background": "#f7f6f1"
       },
@@ -128,7 +136,7 @@
         "numberFormat": "0.00"
       },
       {
-        "range": "B9:B12",
+        "range": "B9:B13",
         "numberFormat": "0.000000"
       },
       {
@@ -168,19 +176,35 @@
         "numberFormat": "#,##0"
       },
       {
-        "range": "Q5:Q",
+        "range": "N5:N",
         "numberFormat": "0.00000"
       },
       {
         "range": "R5:R",
-        "numberFormat": "#,##0"
-      },
-      {
-        "range": "Y5:Z",
         "numberFormat": "0.00000"
       },
       {
-        "range": "AB5:HS",
+        "range": "S5:S",
+        "numberFormat": "#,##0"
+      },
+      {
+        "range": "V5:V",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "W5:W",
+        "numberFormat": "yyyy-mm-dd"
+      },
+      {
+        "range": "Y5:Y",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "AG5:AH",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "AJ5:IA",
         "numberFormat": "0.00000"
       }
     ]

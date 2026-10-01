@@ -4,8 +4,9 @@
  *
  * The deploy does three steps on the standalone script project:
  *
- * 1. It replaces the files of the project with each `.gs` file of `src/` and
- *    `src/appsscript.json`. No other file goes up.
+ * 1. It replaces the files of the project with each `.gs` file and each
+ *    `.html` file of `src/`, and `src/appsscript.json`. No other file goes
+ *    up.
  * 2. It creates a new version of the project.
  * 3. It moves the one versioned deployment of the project to that version.
  *    When the project has no versioned deployment, it creates one. When the
@@ -39,19 +40,26 @@ const API = "https://script.googleapis.com/v1";
 const MANIFEST = "appsscript";
 
 /**
- * The file list of the upload. The manifest has the type JSON and each
- * script file has the type SERVER_JS. The name of each file has no
- * extension, as the Apps Script API requires.
+ * The type of each file extension of `src/` that goes up, as the Apps Script
+ * API names it.
+ */
+const TYPES = { ".gs": "SERVER_JS", ".html": "HTML" };
+
+/**
+ * The file list of the upload. The manifest has the type JSON, each script
+ * file has the type SERVER_JS, and each page of the sidebar has the type
+ * HTML. The name of each file has no extension, as the Apps Script API
+ * requires.
  *
  * @returns {{ name: string, type: string, source: string }[]} The files.
  */
 function projectFiles() {
   const scripts = readdirSync(SRC)
-    .filter((name) => extname(name) === ".gs")
+    .filter((name) => Object.hasOwn(TYPES, extname(name)))
     .sort()
     .map((name) => ({
-      name: name.slice(0, -".gs".length),
-      type: "SERVER_JS",
+      name: name.slice(0, -extname(name).length),
+      type: TYPES[extname(name)],
       source: readFileSync(resolve(SRC, name), "utf8"),
     }));
   const manifest = {
