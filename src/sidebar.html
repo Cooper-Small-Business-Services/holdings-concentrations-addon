@@ -1,0 +1,427 @@
+<!doctype html>
+<html>
+  <head>
+    <base target="_top" />
+    <meta charset="utf-8" />
+    <style>
+      body {
+        margin: 0;
+        padding: 12px;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 13px;
+        color: #1d1c1a;
+        background: #ffffff;
+      }
+      h2 {
+        margin: 16px 0 6px;
+        font-size: 14px;
+      }
+      p {
+        margin: 6px 0;
+        line-height: 1.4;
+      }
+      label {
+        display: block;
+        margin: 10px 0 4px;
+        font-weight: bold;
+      }
+      select,
+      input[type="text"],
+      input[type="number"] {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 5px 6px;
+        border: 1px solid #c4c2bb;
+        border-radius: 3px;
+        font: inherit;
+      }
+      button {
+        margin: 8px 6px 0 0;
+        padding: 6px 12px;
+        border: 1px solid #c4c2bb;
+        border-radius: 3px;
+        background: #f7f6f1;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.primary {
+        border-color: #2a78d6;
+        background: #2a78d6;
+        color: #ffffff;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .fund {
+        margin: 10px 0;
+        padding: 8px;
+        border: 1px solid #e3e1da;
+        border-radius: 4px;
+      }
+      .line {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .line .ticker {
+        flex: 2;
+      }
+      .line .percent {
+        flex: 1;
+      }
+      .found {
+        margin-top: 4px;
+        color: #57554f;
+      }
+      .found.bad {
+        color: #8a1c1c;
+      }
+      .muted {
+        color: #6b6962;
+      }
+      .total {
+        margin-top: 10px;
+        font-weight: bold;
+      }
+      .over {
+        color: #8a1c1c;
+      }
+      .message {
+        margin-top: 10px;
+        font-weight: bold;
+      }
+      .message.bad {
+        color: #8a1c1c;
+      }
+      .orphan {
+        margin: 10px 0;
+        padding: 8px;
+        border: 1px solid #e3e1da;
+        border-radius: 4px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <p>
+      Some funds, such as the trust funds in many 401(k) plans, do not publish their holdings in a form we can read. If
+      you know what such a fund holds, add its fund mix here. The fact sheet of the fund lists it.
+    </p>
+
+    <p id="loading" class="muted">Loading your holdings…</p>
+    <p id="empty" class="muted" hidden>
+      After a Refresh, each holding that we can't see inside shows up here, and so does each holding with a saved mix.
+    </p>
+
+    <div id="editor" hidden>
+      <label for="holding">Holding</label>
+      <select id="holding"></select>
+
+      <div id="funds"></div>
+      <button id="add" type="button">Add a fund</button>
+
+      <p id="total" class="total"></p>
+      <p id="rest" class="muted"></p>
+
+      <button id="save" class="primary" type="button">Save</button>
+      <button id="delete" type="button" hidden>Delete this mix</button>
+
+      <p class="muted">
+        Tick Substitute when you use a similar fund in place of a fund we can't see inside, such as the mutual fund
+        version of a trust fund. The report marks it.
+      </p>
+    </div>
+
+    <p id="message" class="message" role="status"></p>
+
+    <div id="orphans" hidden>
+      <h2>Saved mixes with no matching holding</h2>
+      <p class="muted">
+        A holding can get a new name or symbol in Tiller. Link its saved mix to the holding, or delete the mix.
+      </p>
+      <div id="orphan-list"></div>
+    </div>
+
+    <p class="muted">Everyone who can edit this spreadsheet can see a saved mix.</p>
+
+    <script>
+      const MAX_FUNDS = 20;
+      const TOLERANCE = 1e-7;
+      let data = { holdings: [], others: [], orphans: [] };
+      let rows = [];
+      let deleteArmed = false;
+
+      const $ = (id) => document.getElementById(id);
+
+      /**
+       * Run a server function of the add-on. The callback gets the result.
+       * A failure shows a message.
+       */
+      function call(name, args, done) {
+        google.script.run
+          .withSuccessHandler(done)
+          .withFailureHandler(() => showMessage("Something went wrong. Close the sidebar and try again.", true))
+          [name](...args);
+      }
+
+      function showMessage(text, bad) {
+        $("message").textContent = text;
+        $("message").className = bad ? "message bad" : "message";
+      }
+
+      function percentText(value) {
+        return `${Math.round(value * 100) / 100}%`;
+      }
+
+      function selected() {
+        return data.holdings.find((holding) => holding.key === $("holding").value) || null;
+      }
+
+      function emptyRow() {
+        return { ticker: "", percent: "", substitute: false, found: "", bad: false };
+      }
+
+      function loadRows() {
+        const holding = selected();
+        rows =
+          holding && holding.mix
+            ? holding.mix.parts.map((part) => ({
+                ticker: part.ticker,
+                percent: String(part.percent),
+                substitute: part.substitute,
+                found: "",
+                bad: false,
+              }))
+            : [emptyRow()];
+        deleteArmed = false;
+        $("delete").textContent = "Delete this mix";
+        $("delete").hidden = !(holding && holding.mix);
+        renderRows();
+      }
+
+      function renderRows() {
+        const box = $("funds");
+        box.replaceChildren();
+        rows.forEach((row, i) => {
+          const card = document.createElement("div");
+          card.className = "fund";
+          const line = document.createElement("div");
+          line.className = "line";
+
+          const ticker = document.createElement("input");
+          ticker.type = "text";
+          ticker.className = "ticker";
+          ticker.placeholder = "Ticker";
+          ticker.setAttribute("aria-label", `Ticker of fund ${i + 1}`);
+          ticker.value = row.ticker;
+          ticker.addEventListener("input", () => {
+            row.ticker = ticker.value;
+            row.found = "";
+            found.textContent = "";
+            renderTotal();
+          });
+          ticker.addEventListener("change", () => lookup(row, ticker, found));
+
+          const percent = document.createElement("input");
+          percent.type = "number";
+          percent.className = "percent";
+          percent.placeholder = "%";
+          percent.min = "0";
+          percent.max = "100";
+          percent.step = "any";
+          percent.setAttribute("aria-label", `Percent of fund ${i + 1}`);
+          percent.value = row.percent;
+          percent.addEventListener("input", () => {
+            row.percent = percent.value;
+            renderTotal();
+          });
+
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "Remove";
+          remove.addEventListener("click", () => {
+            rows.splice(i, 1);
+            if (rows.length === 0) rows.push(emptyRow());
+            renderRows();
+          });
+          line.append(ticker, percent, remove);
+
+          const mark = document.createElement("label");
+          mark.style.fontWeight = "normal";
+          const substitute = document.createElement("input");
+          substitute.type = "checkbox";
+          substitute.checked = row.substitute;
+          substitute.addEventListener("change", () => {
+            row.substitute = substitute.checked;
+          });
+          mark.append(substitute, document.createTextNode(" Substitute"));
+
+          const found = document.createElement("div");
+          found.className = row.bad ? "found bad" : "found";
+          found.textContent = row.found;
+
+          card.append(line, found, mark);
+          box.append(card);
+        });
+        $("add").disabled = rows.length >= MAX_FUNDS;
+        renderTotal();
+      }
+
+      function lookup(row, input, found) {
+        const asked = input.value;
+        if (asked.trim() === "") return;
+        found.textContent = "Checking…";
+        found.className = "found";
+        call("lookupFund", [asked], (result) => {
+          if (input.value !== asked) return;
+          row.ticker = result.ticker;
+          input.value = result.ticker;
+          row.found = result.text;
+          row.bad = !result.ok;
+          found.textContent = result.text;
+          found.className = result.ok ? "found" : "found bad";
+          renderTotal();
+        });
+      }
+
+      function renderTotal() {
+        const numbers = rows.map((row) => Number(row.percent));
+        const total = numbers.reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+        const over = total > 100 + TOLERANCE;
+        const complete = rows.every(
+          (row, i) => row.ticker.trim() !== "" && Number.isFinite(numbers[i]) && numbers[i] > 0 && numbers[i] <= 100,
+        );
+        $("total").textContent = `Total: ${percentText(total)}`;
+        $("total").className = over ? "total over" : "total";
+        if (over) {
+          $("rest").textContent = "The total is over 100%. Lower a percent to save.";
+        } else if (total < 100 - TOLERANCE) {
+          $("rest").textContent = `The rest, ${percentText(100 - total)}, shows as Not described.`;
+        } else {
+          $("rest").textContent = "";
+        }
+        $("save").disabled = over || !complete || selected() === null;
+      }
+
+      function save() {
+        const holding = selected();
+        if (holding === null) return;
+        const funds = rows.map((row) => ({
+          ticker: row.ticker.trim(),
+          percent: Number(row.percent),
+          substitute: row.substitute,
+        }));
+        $("save").disabled = true;
+        call("saveMix", [holding.key, funds], (result) => {
+          showMessage(result.text, !result.ok);
+          if (result.ok) render(result.data, holding.key);
+          else renderTotal();
+        });
+      }
+
+      function remove() {
+        const holding = selected();
+        if (holding === null || !holding.mix) return;
+        if (!deleteArmed) {
+          deleteArmed = true;
+          $("delete").textContent = "Click again to delete";
+          return;
+        }
+        call("deleteMix", [holding.key], (result) => {
+          showMessage(result.text, !result.ok);
+          if (result.ok) render(result.data, holding.key);
+        });
+      }
+
+      function mixText(mix) {
+        return mix.parts
+          .map((part) => `${part.ticker} ${percentText(part.percent)}${part.substitute ? " (substitute)" : ""}`)
+          .join(", ");
+      }
+
+      function renderOrphans() {
+        const list = $("orphan-list");
+        list.replaceChildren();
+        $("orphans").hidden = data.orphans.length === 0;
+        for (const orphan of data.orphans) {
+          const card = document.createElement("div");
+          card.className = "orphan";
+          const name = document.createElement("p");
+          name.textContent = orphan.key;
+          name.style.fontWeight = "bold";
+          const funds = document.createElement("p");
+          funds.className = "muted";
+          funds.textContent = mixText(orphan.mix);
+          const pick = document.createElement("select");
+          pick.setAttribute("aria-label", `Holding for the mix of ${orphan.key}`);
+          const none = document.createElement("option");
+          none.value = "";
+          none.textContent = "Pick a holding";
+          pick.append(none);
+          for (const other of data.others) {
+            const option = document.createElement("option");
+            option.value = other.key;
+            option.textContent = other.label;
+            pick.append(option);
+          }
+          const link = document.createElement("button");
+          link.type = "button";
+          link.textContent = "Link";
+          link.addEventListener("click", () => {
+            if (pick.value === "") return;
+            call("linkMix", [orphan.key, pick.value], (result) => {
+              showMessage(result.text, !result.ok);
+              if (result.ok) render(result.data, pick.value);
+            });
+          });
+          const drop = document.createElement("button");
+          drop.type = "button";
+          drop.textContent = "Delete";
+          drop.addEventListener("click", () => {
+            call("deleteMix", [orphan.key], (result) => {
+              showMessage(result.text, !result.ok);
+              if (result.ok) render(result.data, $("holding").value);
+            });
+          });
+          card.append(name, funds, pick, link, drop);
+          list.append(card);
+        }
+      }
+
+      function render(next, keep) {
+        data = next;
+        $("loading").hidden = true;
+        const select = $("holding");
+        select.replaceChildren();
+        for (const holding of data.holdings) {
+          const option = document.createElement("option");
+          option.value = holding.key;
+          option.textContent = holding.mix ? `${holding.label} (mix saved)` : holding.label;
+          select.append(option);
+        }
+        if (data.holdings.some((holding) => holding.key === keep)) select.value = keep;
+        $("empty").hidden = data.holdings.length > 0;
+        $("editor").hidden = data.holdings.length === 0;
+        loadRows();
+        renderOrphans();
+      }
+
+      $("holding").addEventListener("change", () => {
+        showMessage("", false);
+        loadRows();
+      });
+      $("add").addEventListener("click", () => {
+        if (rows.length >= MAX_FUNDS) return;
+        rows.push(emptyRow());
+        renderRows();
+      });
+      $("save").addEventListener("click", save);
+      $("delete").addEventListener("click", remove);
+
+      call("mixSidebarData", [], (result) => render(result, ""));
+    </script>
+  </body>
+</html>

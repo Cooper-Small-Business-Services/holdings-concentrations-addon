@@ -40,6 +40,7 @@ WHAT YOU GET
 - A fund overlap list that shows how much of each pair of your funds sits in the same stocks, so you can spot two funds that give you the same exposure. You pick the smallest overlap to show (10% to start).
 - The cash, bonds, Treasury securities, and other holdings inside your funds, in their own rows.
 - The date of the portfolio report of each fund, so you know how current the data is.
+- A Describe a fund sidebar for a fund that we can't see inside, such as a trust fund in a 401(k) plan. Type the funds that it holds from its fact sheet, and the report looks inside them too. The report shows how much of your portfolio its measures cover.
 
 HOW TO START
 1. Get a free API key at https://www.coopersbs.com/data/. Enter your email address, agree to the Terms of Service, and copy the key that the page shows. Verify your email within 24 hours to keep the key active.
@@ -55,15 +56,17 @@ When you choose Refresh, the add-on sends one request to the service. For each h
 - the ticker symbol, or the description of the holding when it has no symbol
 - its share of your portfolio, such as 0.12 for 12%
 
+For a holding that you describe in the Describe a fund sidebar, the request holds the ticker of each fund in its mix and that fund's share of the holding, in place of the symbol. When you type a ticker in the sidebar, the add-on sends that ticker alone to find the fund name.
+
 The request never holds dollar amounts, share counts, account names, or your portfolio total. Your API key goes with the request, so the service knows that the request is yours. The service does not keep the symbols or the shares that you send. The dollar values in your report come from your own spreadsheet.
 
 A holding with no symbol goes by its description. Check those descriptions before your first refresh.
 
 WHAT THE ADD-ON CAN ACCESS
-The add-on can see and change only the spreadsheet where you use it. It reads the Holdings tab. It adds a Concentration tab and a hidden tab that holds the latest answer from the service. It changes no other tab.
+The add-on can see and change only the spreadsheet where you use it. It reads the Holdings tab. It adds a Concentration tab and a hidden tab that holds the latest answer from the service. It changes no other tab. The add-on opens the Describe a fund sidebar only when you choose it from the menu. Each fund mix that you save stays in the spreadsheet, where each editor of the spreadsheet can see it.
 
 LIMITS
-- Each key can make up to 300 requests per minute. One refresh uses one request.
+- Each key can make up to 300 requests per minute. One refresh uses one request. Each ticker check in the sidebar uses one request.
 - One refresh can include up to 200 different holdings.
 
 PRICE

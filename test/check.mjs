@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * The test harness of src/concentration.gs and src/layout.gs.
+ * The test harness of src/concentration.gs, src/layout.gs, and
+ * src/sidebar.html.
  *
  * The harness loads the two script files into one node:vm context with fakes
  * of the Apps Script services. The spreadsheet fake starts with a synthetic
@@ -12,8 +13,9 @@
  * layout of the report. The definition files in test/fixtures/ hold that
  * layout.
  *
- * The harness calculates the two run-time formulas B7 and B8 of the report
- * alone, with a small evaluator. It reads the text of each other formula. No
+ * The harness calculates the two run-time formulas B8 and B9 and the
+ * coverage label B11 of the report alone, with a small evaluator. It reads
+ * the text of each other formula. No
  * formula can hold a column letter of the Holdings tab. Each range of the
  * sources block must end at the column of position MAX_POSITIONS. Each
  * FILTER must sit in IFNA or IFERROR, or GUARDED_FILTERS must name it.
@@ -22,17 +24,28 @@
  * fake. They check that a refresh replaces those tabs and keeps the values
  * that the person typed.
  *
- * Run 1 sends one real request to the concentration route with the key of the
- * environment variable HOLDINGS_API_KEY. The other runs send no request. The
- * harness prints no part of the key.
+ * The fund mix runs call the server functions of the sidebar: the data of
+ * the sidebar, the ticker check, the save, the link, and the delete of a mix.
+ * They check the static rules of the sidebar page. Then a refresh sends a
+ * position with parts and gets a synthetic answer in the shape of the route
+ * with parts.
  *
- * The option --offline skips the real request. Run 1 then gets a synthetic
+ * Run 1 sends one real request to the concentration route with the key of the
+ * environment variable HOLDINGS_API_KEY. The request holds no parts. The other
+ * runs send no request. The harness prints no part of the key.
+ *
+ * The option --live-parts also sends the request of the fund mix run to the
+ * route, so the harness sends two real requests. Use it after the route
+ * accepts parts.
+ *
+ * The option --offline skips each real request. Run 1 then gets a synthetic
  * answer, and the harness uses an invented key. Each other assertion runs.
  * Use it when no key is available, such as in a pull request from a fork.
  *
  * Usage, from the repository root:
  *
  *   HOLDINGS_API_KEY=<your key> node test/check.mjs
+ *   HOLDINGS_API_KEY=<your key> node test/check.mjs --live-parts
  *   node test/check.mjs --offline
  *
  * Exit codes: 0 = each assertion passed, 1 = an assertion failed, 2 = no key.
@@ -47,8 +60,10 @@ import vm from "node:vm";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(HERE, "..", "src");
 const SCRIPT_FILES = ["concentration.gs", "layout.gs"].map((name) => resolve(SRC, name));
+const SIDEBAR_FILE = resolve(SRC, "sidebar.html");
 const MANIFEST_FILE = resolve(SRC, "appsscript.json");
-const ROUTE_URL = "https://data.coopersbs.com/funds/v1/concentration";
+const FUND_URL = "https://data.coopersbs.com/funds/v1/";
+const ROUTE_URL = `${FUND_URL}concentration`;
 const EXPOSURE_TAB = "Concentration.Exposure";
 const REPORT_TAB = "Concentration";
 
@@ -66,12 +81,23 @@ const ACCEPTED_FILES = {
 };
 
 /**
- * The two scopes of the manifest, and the one URL prefix that the script can
- * fetch.
+ * The start of the name of each document property that holds a fund mix.
+ */
+const MIX_PREFIX = "FUND_MIX:";
+
+/**
+ * The time zone of the spreadsheet fake.
+ */
+const TIME_ZONE = "America/Chicago";
+
+/**
+ * The three scopes of the manifest, and the one URL prefix that the script
+ * can fetch. The sidebar needs script.container.ui.
  */
 const SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets.currentonly",
   "https://www.googleapis.com/auth/script.external_request",
+  "https://www.googleapis.com/auth/script.container.ui",
 ];
 const URL_PREFIXES = ["https://data.coopersbs.com/funds/v1/"];
 
@@ -85,6 +111,17 @@ const NEW_COLUMNS = 26;
  * True when the harness skips the real request.
  */
 const OFFLINE = process.argv.includes("--offline");
+
+/**
+ * True when the fund mix run also sends its request to the route. The
+ * option --offline wins.
+ */
+const LIVE_PARTS = !OFFLINE && process.argv.includes("--live-parts");
+
+/**
+ * The count of real requests that the harness sends.
+ */
+const LIVE_LIMIT = OFFLINE ? 0 : LIVE_PARTS ? 2 : 1;
 
 /**
  * The key of the route. The harness reads it from the environment alone. The
@@ -143,6 +180,7 @@ const MEASURES = [
   "notLookedThroughWeight",
   "weightSum",
   "weightDifference",
+  "unknownWeight",
 ];
 const EQUITY = ["weight", "lineCount", "top10Weight", "hhi", "effectiveCount"];
 const FUND_FIELDS = [
@@ -156,17 +194,20 @@ const FUND_FIELDS = [
   "mergedByTicker",
   "mergedByLei",
   "mergedByName",
+  "partWeight",
 ];
+const MIX_FIELDS = ["mixId", "mixWeight", "entered", "partTicker", "partWeight", "substitute"];
 const LINE_FIELDS = ["key", "name", "ticker", "lei", "class", "weight", "stockWeight"];
 
 /**
  * The first column of each block of the Concentration.Exposure tab: the
- * funds in D, the overlaps in O, the lines in T, the part name in AA, and
- * the sources in AB. Column 1 is A.
+ * funds in D, the overlaps in P, the mixes in U, the lines in AB, the part
+ * name in AI, and the sources in AJ. Column 1 is A.
  */
 const FUND_AT = 4;
-const OVERLAP_AT = 15;
-const LINE_AT = 20;
+const OVERLAP_AT = 16;
+const MIX_AT = 21;
+const LINE_AT = 28;
 const PART_AT = LINE_AT + LINE_FIELDS.length;
 const SOURCE_AT = PART_AT + 1;
 
@@ -180,15 +221,25 @@ const EQUITY_ROW = 27;
  * and the two cells of the Concentration tab that a person types in.
  */
 const VERSION_CELL = "B3";
-const THRESHOLD_CELL = "B21";
-const MINIMUM_CELL = "B22";
+const THRESHOLD_CELL = "B22";
+const MINIMUM_CELL = "B23";
 
 /**
- * The cell of the fund header of the Concentration tab, and the cell of the
- * report spill.
+ * The cells of the Concentration tab: the total value, the note under the
+ * status cell, the coverage label, the fund header, and the report spill.
  */
-const HEADER_CELL = "H24";
-const SPILL_CELL = "A25";
+const TOTAL_CELL = "B5";
+const NOTE_CELL = "B3";
+const COVERAGE_CELL = "B11";
+const HEADER_CELL = "H25";
+const SPILL_CELL = "A26";
+
+/**
+ * The texts of the report that a person reads about the funds that we can't
+ * see inside.
+ */
+const UNSEEN_TITLE = "Funds we can't see inside";
+const ADD_MIX_NOTE = "Add its fund mix: Concentration › Describe a fund";
 
 /**
  * The error of a failed assertion. The message names the assertion.
@@ -522,6 +573,10 @@ class FakeBook {
     return this.sheets.length;
   }
 
+  getSpreadsheetTimeZone() {
+    return TIME_ZONE;
+  }
+
   insertSheet(name, index) {
     if (this.sheets.some((sheet) => sheet.name === name)) throw new Error(`A sheet named "${name}" exists.`);
     const sheet = new FakeSheet(name, NEW_ROWS, NEW_COLUMNS, this.log);
@@ -574,13 +629,16 @@ function fakeBuilder(methods) {
 
 /**
  * The state of the fakes that the runs change: the log of changes, the user
- * properties, the answers of the key dialog, the messages of the alerts, the
- * lock, the fetch handler, the fetch calls, the menus, the tabs that the
- * script asked for, and the state of the tabs at the time of each request.
+ * properties, the document properties, the answers of the key dialog, the
+ * messages of the alerts, the sidebars, the lock, the fetch handler, the
+ * fetch calls, the menus, the tabs that the script asked for, and the state
+ * of the tabs at the time of each request.
  */
 const state = {
   log: [],
   userProperties: new Map(),
+  documentProperties: new Map(),
+  sidebars: [],
   promptAnswers: [],
   prompts: [],
   alerts: [],
@@ -623,12 +681,12 @@ const BUTTON = { OK: "OK", CANCEL: "CANCEL", CLOSE: "CLOSE" };
 const BUTTON_SET = { OK: "OK", OK_CANCEL: "OK_CANCEL" };
 
 /**
- * The Ui fake. It has the add-on menu builder, the input dialog, and the
- * alert. The input dialog takes its answer from the queue
- * state.promptAnswers. The Ui methods that need the scope
- * script.container.ui, such as showModalDialog and showSidebar, are absent,
- * so a call to one of them fails the harness. A published add-on puts its
- * menu under Extensions, so createMenu fails the harness too.
+ * The Ui fake. It has the add-on menu builder, the input dialog, the alert,
+ * and the sidebar. The input dialog takes its answer from the queue
+ * state.promptAnswers. showSidebar records the page in state.sidebars. The
+ * other dialogs, such as showModalDialog, are absent, so a call to one of
+ * them fails the harness. A published add-on puts its menu under Extensions,
+ * so createMenu fails the harness too.
  */
 function fakeUi() {
   const menu = { addon: true, items: [] };
@@ -657,6 +715,27 @@ function fakeUi() {
     alert: (text) => {
       state.alerts.push(String(text));
       return BUTTON.OK;
+    },
+    showSidebar: (page) => {
+      state.sidebars.push(page);
+    },
+  };
+}
+
+/**
+ * A fake of a properties store over a Map.
+ */
+function fakeStore(map) {
+  return {
+    getProperty: (name) => map.get(name) ?? null,
+    getProperties: () => Object.fromEntries(map),
+    setProperty(name, value) {
+      map.set(name, String(value));
+      return this;
+    },
+    deleteProperty(name) {
+      map.delete(name);
+      return this;
     },
   };
 }
@@ -688,20 +767,30 @@ const services = {
     getScriptProperties: () => {
       throw new Error("The script reads the script properties, which all users of an add-on share.");
     },
-    getDocumentProperties: () => {
-      throw new Error("The script reads the document properties, which each editor of the spreadsheet can read.");
+    getDocumentProperties: () => fakeStore(state.documentProperties),
+    getUserProperties: () => fakeStore(state.userProperties),
+  },
+  HtmlService: {
+    createHtmlOutputFromFile: (name) => {
+      const source = readFileSync(resolve(SRC, `${name}.html`), "utf8");
+      const page = { file: name, source, title: "" };
+      page.setTitle = (title) => {
+        page.title = title;
+        return page;
+      };
+      return page;
     },
-    getUserProperties: () => ({
-      getProperty: (name) => state.userProperties.get(name) ?? null,
-      setProperty(name, value) {
-        state.userProperties.set(name, String(value));
-        return this;
-      },
-      deleteProperty(name) {
-        state.userProperties.delete(name);
-        return this;
-      },
-    }),
+  },
+  Utilities: {
+    formatDate: (date, zone, format) => {
+      if (format !== "yyyy-MM-dd") throw new Error(`The fake formats yyyy-MM-dd alone, not ${format}.`);
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: zone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(date);
+    },
   },
   LockService: {
     getScriptLock: () => {
@@ -757,19 +846,24 @@ try {
 let liveRequests = 0;
 
 /**
- * The body text of the one real answer. The harness compares the cells with
- * it.
+ * The body text of the answer of run 1. The harness compares the cells with
+ * it, and later runs send it again.
  */
 let liveText = null;
 
 /**
- * The fetch handler of run 1. It sends the request of the script to the
- * route and blocks until the answer arrives, as UrlFetchApp.fetch does. The
- * harness allows one such request.
+ * The body text of the last answer of liveFetch or offlineFetch.
+ */
+let answerText = null;
+
+/**
+ * The fetch handler of a run with a real request. It sends the request of
+ * the script to the route and blocks until the answer arrives, as
+ * UrlFetchApp.fetch does. The harness allows LIVE_LIMIT such requests.
  */
 function liveFetch(url, options) {
   liveRequests += 1;
-  if (liveRequests > 1) throw new Error("The harness sends one real request alone.");
+  if (liveRequests > LIVE_LIMIT) throw new Error(`The harness sends ${LIVE_LIMIT} real requests at most.`);
   const request = {
     url,
     method: String(options.method).toUpperCase(),
@@ -785,7 +879,7 @@ function liveFetch(url, options) {
   if (child.status !== 0) throw new Error(`The fetch process stopped with status ${child.status}.`);
   const out = JSON.parse(child.stdout);
   if (out.error) throw new Error(`The fetch failed: ${out.error}`);
-  liveText = out.text;
+  answerText = out.text;
   return fakeResponse(out.status, out.text);
 }
 
@@ -847,9 +941,10 @@ function equityOf(stockWeights) {
 }
 
 /**
- * The overlaps block of a list of funds and lines: one element for each pair
- * of funds that hold stock in one or more of the same lines, largest overlap
- * first.
+ * The overlaps block of a list of positions and lines: one element for each
+ * pair of positions of the funds block that hold stock in one or more of the
+ * same lines, largest overlap first. Each position holds its id and its
+ * weight.
  */
 function overlapsOf(funds, lines) {
   const overlaps = [];
@@ -872,13 +967,19 @@ function overlapsOf(funds, lines) {
 }
 
 /**
- * A synthetic answer of the route for the positions of run 1, in the shape
- * of a real answer of schema version 1.7. Each name and each number is
- * invented. A position of OFFLINE_FUNDS enters through its holdings and gets
- * a residual line. Each other position enters as one line of OFFLINE_DIRECT.
+ * A synthetic answer of the route for a list of positions, in the shape of a
+ * real answer of schema version 1.8. Each name and each number is invented.
+ * A position of OFFLINE_FUNDS enters through its holdings and gets a
+ * residual line. Each other position enters as one line of OFFLINE_DIRECT.
  * Holdings with one key share one line. The line of company B holds a stock
  * from both funds and a bond from fund B. The line of company C holds a
  * stock from fund A and a bond from fund B.
+ *
+ * A position with parts enters through each part at the weight of the
+ * position times the weight of the part. A fund part gets an element of the
+ * funds block with its partWeight. The rest of a mix under 100% enters as one
+ * line of the class unknown. Each contribution goes under the position id.
+ * The overlaps block counts each position one time.
  */
 function offlineAnswer(positions) {
   const byKey = new Map();
@@ -897,19 +998,30 @@ function offlineAnswer(positions) {
     line.sizes[holding.class] = (line.sizes[holding.class] ?? 0) + Math.abs(weight);
   };
   const funds = [];
-  for (const { id, weight } of positions) {
-    const holdings = OFFLINE_FUNDS[id];
+  const fundPositions = [];
+  /**
+   * Enter one ticker at a weight under a position id. The result is true
+   * when the ticker is a fund of OFFLINE_FUNDS.
+   */
+  const enter = (id, ticker, weight, partWeight) => {
+    const holdings = OFFLINE_FUNDS[ticker];
     if (holdings === undefined) {
-      add(OFFLINE_DIRECT[id], id, weight);
-      continue;
+      const direct = OFFLINE_DIRECT[ticker] ?? { key: `ticker:${ticker}`, name: ticker, ticker, class: "unknown" };
+      add(direct, id, weight);
+      return false;
     }
     for (const holding of holdings) add(holding, id, (weight * holding.pct) / 100);
     const covered = holdings.reduce((a, holding) => a + holding.pct, 0) / 100;
-    const residual = { key: `residual:${id}`, name: `${id} (not looked through)`, ticker: null, class: "other" };
+    const residual = {
+      key: `residual:${ticker}`,
+      name: `${ticker} (not looked through)`,
+      ticker: null,
+      class: "other",
+    };
     add(residual, id, weight * Math.max(0, 1 - covered));
     funds.push({
       id,
-      ticker: id,
+      ticker,
       reportDate: "2026-06-30",
       accessionNumber: `0000000000-26-00000${funds.length + 1}`,
       holdingCount: holdings.length,
@@ -918,7 +1030,25 @@ function offlineAnswer(positions) {
       mergedByTicker: 1,
       mergedByLei: 0,
       mergedByName: holdings.length - 1,
+      partWeight,
     });
+    return true;
+  };
+  for (const position of positions) {
+    const { id, weight } = position;
+    if (!Array.isArray(position.parts)) {
+      if (enter(id, position.ticker ?? id, weight, null)) fundPositions.push({ id, weight });
+      continue;
+    }
+    let described = 0;
+    let looked = false;
+    for (const part of position.parts) {
+      described += part.weight;
+      looked = enter(id, part.ticker, weight * part.weight, part.weight) || looked;
+    }
+    if (looked) fundPositions.push({ id, weight });
+    const rest = weight * (1 - described);
+    if (rest > 1e-12) add({ key: `id:${id}`, name: `${id} (not described)`, ticker: null, class: "unknown" }, id, rest);
   }
   const lines = [...byKey.values()].map((line) => ({
     key: line.key,
@@ -946,13 +1076,14 @@ function offlineAnswer(positions) {
       notLookedThroughWeight: sum - lookedThrough,
       weightSum: sum,
       weightDifference: sum - 1,
+      unknownWeight: lines.filter((line) => line.class === "unknown").reduce((a, line) => a + line.weight, 0),
       equity: equityOf(lines.map((line) => line.stockWeight)),
     },
     funds,
-    overlaps: overlapsOf(funds, lines),
+    overlaps: overlapsOf(fundPositions, lines),
     lines,
     meta: {
-      schemaVersion: "1.7",
+      schemaVersion: "1.8",
       source: "Invented data of the offline run",
       pctValueUnit: "percent of net assets",
       disclaimer: "Invented data. Not investment advice.",
@@ -961,13 +1092,13 @@ function offlineAnswer(positions) {
 }
 
 /**
- * The fetch handler of run 1 in the offline run. It answers with the
- * synthetic answer and sends no request.
+ * The fetch handler of a run with a synthetic answer. It answers with the
+ * synthetic answer of the positions of the request and sends no request.
  */
 function offlineFetch(url, options) {
   offlineRequests += 1;
-  liveText = JSON.stringify(offlineAnswer(JSON.parse(options.payload).positions));
-  return fakeResponse(200, liveText);
+  answerText = JSON.stringify(offlineAnswer(JSON.parse(options.payload).positions));
+  return fakeResponse(200, answerText);
 }
 
 /**
@@ -1148,18 +1279,20 @@ function runRows() {
 }
 
 /**
- * The value of a formula of the report that reads the run-time block. The
- * evaluator knows the parts that the two run-time formulas use alone: a
- * number, a text in quotes, a reference to a cell or a range of the tab
- * Concentration.Exposure, the comparison `=`, and the functions IF,
- * ISNUMBER, COUNT, and AVERAGE. COUNT and AVERAGE read the numbers of a
- * range and skip each other cell, as Google Sheets does. AVERAGE of no number
- * gives the error #DIV/0!. Another part stops the harness.
+ * The value of a formula of the report that reads the run-time block or the
+ * unknown weight. The evaluator knows the parts that the two run-time
+ * formulas and the coverage label use alone: a number, a text in quotes, a
+ * reference to a cell or a range of the tab Concentration.Exposure, the
+ * operators `&` and `-` from left to right, the comparison `=`, and the
+ * functions IF, ISNUMBER, COUNT, AVERAGE, and TEXT. COUNT and AVERAGE read
+ * the numbers of a range and skip each other cell, as Google Sheets does.
+ * AVERAGE of no number gives the error #DIV/0!. TEXT knows the formats "0%"
+ * and "0.0%". Another part stops the harness.
  */
 function calculate(formula, sheet) {
   const body = formula.replace(/^=/, "");
   const tokens =
-    body.match(/'[^']*'!\$?[A-Z]+\$?\d+(?::\$?[A-Z]+\$?\d+)?|"[^"]*"|[A-Z]+\(|\d+(?:\.\d+)?|[(),=]/g) ?? [];
+    body.match(/'[^']*'!\$?[A-Z]+\$?\d+(?::\$?[A-Z]+\$?\d+)?|"[^"]*"|[A-Z]+\(|\d+(?:\.\d+)?|[(),=&-]/g) ?? [];
   if (tokens.join("") !== body) throw new Error(`The evaluator cannot read the formula ${formula}.`);
   let i = 0;
   const next = () => tokens[i++];
@@ -1192,11 +1325,19 @@ function calculate(formula, sheet) {
     if (/^\d/.test(token)) return { value: Number(token) };
     throw new Error(`The evaluator cannot read "${token}" in ${formula}.`);
   };
+  const chain = () => {
+    let left = primary();
+    while (tokens[i] === "&" || tokens[i] === "-") {
+      const op = next();
+      left = { op, args: [left, primary()] };
+    }
+    return left;
+  };
   const expression = () => {
-    const left = primary();
+    const left = chain();
     if (tokens[i] !== "=") return left;
     next();
-    return { equal: [left, primary()] };
+    return { equal: [left, chain()] };
   };
   const numbers = (node) => {
     if (!node.ref) throw new Error("COUNT and AVERAGE take a range in the run-time formulas.");
@@ -1213,6 +1354,8 @@ function calculate(formula, sheet) {
       return sheet.block(node.ref.row, node.ref.column, 1, 1)[0][0];
     }
     if (node.equal) return value(node.equal[0]) === value(node.equal[1]);
+    if (node.op === "&") return `${value(node.args[0])}${value(node.args[1])}`;
+    if (node.op === "-") return value(node.args[0]) - value(node.args[1]);
     const { call, args } = node;
     if (call === "IF") return value(args[0]) ? value(args[1]) : value(args[2]);
     if (call === "ISNUMBER") return typeof value(args[0]) === "number";
@@ -1220,6 +1363,12 @@ function calculate(formula, sheet) {
     if (call === "AVERAGE") {
       const list = numbers(args[0]);
       return list.length === 0 ? "#DIV/0!" : list.reduce((a, b) => a + b, 0) / list.length;
+    }
+    if (call === "TEXT") {
+      const format = value(args[1]);
+      const places = { "0%": 0, "0.0%": 1 }[format];
+      if (places === undefined) throw new Error(`The evaluator does not know the TEXT format ${format}.`);
+      return `${(value(args[0]) * 100).toFixed(places)}%`;
     }
     throw new Error(`The evaluator does not know the function ${call}.`);
   };
@@ -1434,10 +1583,12 @@ function filterTreatment(call, formula) {
 
 function main() {
   if (OFFLINE) {
-    console.log("OFFLINE: the harness skips the one real request to the concentration route.\n");
+    console.log("OFFLINE: the harness skips each real request to the concentration route.\n");
   } else if (API_KEY === "") {
     console.error("Set HOLDINGS_API_KEY in the environment. The usage line in the header of check.mjs shows how.");
     process.exit(2);
+  } else if (!LIVE_PARTS) {
+    console.log("The fund mix run gets a synthetic answer. Add --live-parts to send it to the route.\n");
   }
   const context = vm.createContext({ ...services });
   for (const file of SCRIPT_FILES) {
@@ -1448,7 +1599,20 @@ function main() {
     }
     vm.runInContext(source, context, { filename: file });
   }
-  for (const name of ["onOpen", "onInstall", "setApiKey", "refreshConcentration", "ensureTabs", "readInputs"]) {
+  for (const name of [
+    "onOpen",
+    "onInstall",
+    "setApiKey",
+    "refreshConcentration",
+    "ensureTabs",
+    "readInputs",
+    "showMixSidebar",
+    "mixSidebarData",
+    "lookupFund",
+    "saveMix",
+    "deleteMix",
+    "linkMix",
+  ]) {
     check(typeof context[name] === "function", `the script defines ${name}`);
   }
   const accepted = {
@@ -1511,7 +1675,7 @@ function main() {
 
   console.log("== Manifest");
   const manifest = JSON.parse(readFileSync(MANIFEST_FILE, "utf8"));
-  check(JSON.stringify(manifest.oauthScopes) === JSON.stringify(SCOPES), "the manifest holds the two scopes alone");
+  check(JSON.stringify(manifest.oauthScopes) === JSON.stringify(SCOPES), "the manifest holds the three scopes alone");
   check(
     JSON.stringify(manifest.urlFetchWhitelist) === JSON.stringify(URL_PREFIXES),
     "the manifest allows fetches under https://data.coopersbs.com/funds/v1/ alone",
@@ -1537,6 +1701,72 @@ function main() {
   check(cut.length === 1 && cut[0].id.length === 64, "two keys with one first 64 code units give one position");
   check(context.tickerOf("BRK.B") === "BRK.B" && context.tickerOf("$abc") === "$abc", "a valid symbol is a ticker");
   check(context.tickerOf("CASH SWEEP") === null, "a symbol that fails the ticker pattern gives no ticker");
+  check(
+    context.normalTicker(" $vtiax ") === "VTIAX" && context.normalTicker("A B") === null,
+    "normalTicker trims, removes one $, and changes to upper case",
+  );
+  check(
+    context.daySerial("1899-12-30") === 0 && context.daySerial("2026-09-30") === 46295,
+    "daySerial gives the date serial number of Google Sheets",
+  );
+  const part = (ticker, percent, substitute = false) => ({ ticker, percent, substitute });
+  check(context.mixProblem([part("VOO", 60), part("IVV", 40)]) === "", "a mix of 100% is valid");
+  check(
+    context.mixProblem([part("VOO", 33.33), part("IVV", 33.33), part("AAPL", 33.34)]) === "",
+    "33.33 + 33.33 + 33.34 is valid",
+  );
+  const problems = [
+    [[], "Add at least one fund."],
+    [Array.from({ length: 21 }, (_, n) => part(`T${n}`, 1)), "A mix can hold 20 funds at most."],
+    [[part("VOO", 60), part("IVV", 40.01)], "The total is over 100%. Lower a percent to save."],
+    [[part("VOO", 10), part("VOO", 20)], "VOO is in the mix two times."],
+    [[part("voo", 10)], 'Check the ticker "voo".'],
+    [[part("VOO", 0)], "Give VOO a percent above 0 and up to 100."],
+    [[{ ticker: "VOO", percent: 10 }], "Each row needs a substitute box."],
+  ];
+  for (const [parts, text] of problems) {
+    check(context.mixProblem(parts) === text, `mixProblem gives "${text}"`);
+  }
+  check(
+    JSON.stringify(
+      context.parseMix('{"entered":"2026-02-30","parts":[{"ticker":"VOO","percent":1,"substitute":false}]}'),
+    ) === "null" &&
+      context.parseMix("{not json") === null &&
+      context.parseMix('{"entered":"2026-01-05","parts":[]}') === null,
+    "parseMix refuses a day that does not exist, a text that is not JSON, and a mix with no fund",
+  );
+  const mixes = new Map([["PLAN", { entered: "2026-01-05", parts: [part("VOO", 50, true), part("AAPL", 25)] }]]);
+  const mixed = context.buildPositions(
+    [
+      ["PLAN", 3, "Example plan"],
+      ["VOO", 1, "Example fund"],
+    ],
+    { symbol: 0, value: 1, description: 2 },
+    mixes,
+  );
+  check(
+    JSON.stringify(mixed) ===
+      JSON.stringify([
+        {
+          id: "PLAN",
+          weight: 0.75,
+          parts: [
+            { ticker: "VOO", weight: 0.5 },
+            { ticker: "AAPL", weight: 0.25 },
+          ],
+        },
+        { id: "VOO", ticker: "VOO", weight: 0.25 },
+      ]),
+    `a holding with a mix sends id, weight, and parts, and no ticker (${JSON.stringify(mixed)})`,
+  );
+  check(
+    JSON.stringify(context.mixRows(mixed, mixes)) ===
+      JSON.stringify([
+        ["PLAN", 0.75, context.daySerial("2026-01-05"), "VOO", 0.5, true],
+        ["PLAN", 0.75, context.daySerial("2026-01-05"), "AAPL", 0.25, false],
+      ]),
+    "mixRows gives one row for each fund of each mix, with the substitute flag",
+  );
   check(context.columnNumber("A") === 1 && context.columnNumber("AZ") === 52, "columnNumber reads A and AZ");
   check(
     [1, 26, 27, 52, 220, 702, 703].every((n) => context.columnNumber(context.columnLetter(n)) === n),
@@ -1615,6 +1845,7 @@ function main() {
   console.log("\n== onOpen and onInstall");
   const menuItems = [
     { label: "Refresh", handler: "refreshConcentration" },
+    { label: "Describe a fund", handler: "showMixSidebar" },
     { label: "Set API key", handler: "setApiKey" },
   ];
   context.onOpen({ authMode: "NONE" });
@@ -1623,11 +1854,18 @@ function main() {
   for (const menu of state.menus) {
     check(
       menu.addon === true && JSON.stringify(menu.items) === JSON.stringify(menuItems),
-      "the add-on menu holds Refresh and Set API key",
+      "the add-on menu holds Refresh, Describe a fund, and Set API key",
     );
   }
   check(state.log.length === 0, "onOpen and onInstall change no tab");
-  check(state.userProperties.size === 0, "onOpen and onInstall write no property");
+  check(
+    state.userProperties.size === 0 && state.documentProperties.size === 0,
+    "onOpen and onInstall write no property",
+  );
+  check(
+    state.sidebars.length === 0 && state.prompts.length === 0,
+    "onOpen and onInstall open no sidebar and no dialog",
+  );
   console.log("  pass");
 
   console.log("\n== Set API key");
@@ -1665,6 +1903,7 @@ function main() {
   state.fetchHandler = OFFLINE ? offlineFetch : liveFetch;
   const logStart = state.log.length;
   const runOne = timedRun();
+  liveText = answerText;
   check(state.fetchCalls.length === 1 && liveRequests + offlineRequests === 1, "run 1 sends one request");
   check(state.lockTaken === 1 && state.lockReleased === 1, "run 1 takes the lock and releases it");
 
@@ -1716,22 +1955,25 @@ function main() {
   );
   const holdingsColumns = vm.runInContext("HOLDINGS_COLUMNS", context);
   check(
-    report.cell("B4").includes('EXACT(TRIM(Holdings!$1:$1),"Value")'),
-    "B4 finds the Value column by the header text in row 1",
+    report.cell(TOTAL_CELL).includes('EXACT(TRIM(Holdings!$1:$1),"Value")'),
+    `${TOTAL_CELL} finds the Value column by the header text in row 1`,
   );
   check(
     holdingsColumns.every(
-      (name) => report.cell("B4").includes(`"${name}"`) || report.cell(SPILL_CELL).includes(`"${name}"`),
+      (name) => report.cell(TOTAL_CELL).includes(`"${name}"`) || report.cell(SPILL_CELL).includes(`"${name}"`),
     ),
-    `B4 and ${SPILL_CELL} find each column of findColumns by its header text (${holdingsColumns.join(", ")})`,
+    `${TOTAL_CELL} and ${SPILL_CELL} find each column of findColumns by its header text (${holdingsColumns.join(", ")})`,
   );
-  check(report.cell("B4").includes('"No Holdings column Value"'), "B4 shows a text when no Value column exists");
+  check(
+    report.cell(TOTAL_CELL).includes('"No Holdings column Value"'),
+    `${TOTAL_CELL} shows a text when no Value column exists`,
+  );
 
   const lastSource = vm.runInContext("SOURCE_COLUMN + MAX_POSITIONS - 1", context);
   const firstSource = vm.runInContext("SOURCE_COLUMN", context);
   check(firstSource === SOURCE_AT, `the sources block starts at column ${SOURCE_AT}`);
   const exposureRange = /'Concentration\.Exposure'!\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d*)/g;
-  for (const cell of [HEADER_CELL, SPILL_CELL]) {
+  for (const cell of [NOTE_CELL, HEADER_CELL, SPILL_CELL]) {
     const sourceRanges = [...report.cell(cell).matchAll(exposureRange)].filter(
       (m) => columnNumber(m[1]) === firstSource,
     );
@@ -1844,8 +2086,10 @@ function main() {
   const firstTime = x.cell("B2").getTime();
 
   const answer = JSON.parse(liveText);
-  const measures = x.block(5, 2, 8, 1).map((cells) => cells[0]);
-  MEASURES.forEach((name, i) => check(measures[i] === answer.measures[name], `B${5 + i} holds ${name}`));
+  const measures = x.block(5, 2, MEASURES.length, 1).map((cells) => cells[0]);
+  MEASURES.forEach((name, i) =>
+    check(measures[i] === (answer.measures[name] ?? ""), `B${5 + i} holds ${name}, or is empty with no ${name}`),
+  );
 
   /**
    * The values that B27:B31 must hold for an equity block. A null block
@@ -1859,12 +2103,16 @@ function main() {
   );
 
   const funds = answer.funds;
-  const fundCells = x.block(5, FUND_AT, funds.length, 10);
+  const fundCells = x.block(5, FUND_AT, funds.length, FUND_FIELDS.length);
   funds.forEach((fund, i) => {
     FUND_FIELDS.forEach((name, c) => {
-      check(fundCells[i][c] === (fund[name] ?? ""), `D${5 + i}:M holds ${name} of fund ${i}`);
+      check(fundCells[i][c] === (fund[name] ?? ""), `D${5 + i}:N holds ${name} of fund ${i}`);
     });
   });
+  check(
+    x.block(5, MIX_AT, x.getMaxRows() - 4, MIX_FIELDS.length).every((c) => c.every((v) => v === "")),
+    "the mix block U5:Z is empty when no holding has a mix",
+  );
 
   const pairs = answer.overlaps;
   /**
@@ -1879,7 +2127,7 @@ function main() {
   };
   check(
     pairFaults(x) === 0,
-    `O5:R holds the two ids, overlap, and sharedLineCount of each of the ${pairs.length} pairs`,
+    `P5:S holds the two ids, overlap, and sharedLineCount of each of the ${pairs.length} pairs`,
   );
   check(
     x.block(5 + pairs.length, OVERLAP_AT, x.getMaxRows() - 4 - pairs.length, 4).every((c) => c.every((v) => v === "")),
@@ -1890,7 +2138,7 @@ function main() {
   const idCells = x.block(4, SOURCE_AT, 1, x.getMaxColumns() - SOURCE_AT + 1)[0];
   check(
     ids.every((id, i) => idCells[i] === id),
-    "AB4 onward holds the ids in the body order",
+    "AJ4 onward holds the ids in the body order",
   );
   check(
     idCells.slice(ids.length).every((v) => v === ""),
@@ -1916,7 +2164,7 @@ function main() {
   };
   check(
     partFaults(x) === 0,
-    `T5:AA and the sources from AB5 hold the ${parts.length} part rows of the ${lines.length} lines, in the answer order`,
+    `AB5:AI and the sources from AJ5 hold the ${parts.length} part rows of the ${lines.length} lines, in the answer order`,
   );
   check(
     x
@@ -1930,7 +2178,7 @@ function main() {
   const partIndex = LINE_FIELDS.length;
   const stockRows = partCells.filter((cells) => cells[partIndex] === "stock");
   const otherRows = partCells.filter((cells) => cells[partIndex] === "other");
-  check(stockRows.length + otherRows.length === partCells.length, "column AA of each row holds stock or other");
+  check(stockRows.length + otherRows.length === partCells.length, "column AI of each row holds stock or other");
   check(
     stockRows.every((cells) => Math.abs(sumCells(cells.slice(partIndex + 1)) - cells[stockIndex]) < 1e-9),
     "the source cells of each stock row add up to the stock weight of its line",
@@ -2004,10 +2252,12 @@ function main() {
       `5,${FUND_AT},2`,
       `5,${FUND_AT + 3},1`,
       `5,${OVERLAP_AT},2`,
+      `5,${MIX_AT},1`,
+      `5,${MIX_AT + 3},1`,
       `5,${LINE_AT},4`,
       `4,${SOURCE_AT},${x.getMaxColumns() - SOURCE_AT + 1}`,
     ].every((r) => textRanges.includes(r)),
-    "the script sets the text format on D:E, G, O:P, T:W, and row 4 from AB",
+    "the script sets the text format on D:E, G, P:Q, U, X, AB:AE, and row 4 from AJ",
   );
   const firstFormat = afterFetch.findIndex((e) => e.op === "setNumberFormat");
   const firstWrite = afterFetch.findIndex((e) => e.op === "setValues");
@@ -2032,11 +2282,11 @@ function main() {
   const partHeader = [...LINE_FIELDS, "part", ...ids.map((id) => id.slice(0, 12))];
   console.log("\nGrid of Concentration.Exposure after run 1:", `${x.getMaxRows()} rows, ${x.getMaxColumns()} columns.`);
   console.log(`The answer holds ${lines.length} lines, and the tab holds ${parts.length} part rows.`);
-  console.log("\nFunds block, D5:M:");
+  console.log("\nFunds block, D5:N:");
   table(FUND_FIELDS, fundCells);
-  console.log("\nOverlaps block, O5:R:");
+  console.log("\nOverlaps block, P5:S:");
   table(["firstId", "secondId", "overlap", "sharedLineCount"], x.block(5, OVERLAP_AT, pairs.length, 4));
-  console.log("\nFirst 10 part rows, T5:AA and the sources from AB5:");
+  console.log("\nFirst 10 part rows, AB5:AI and the sources from AJ5:");
   table(partHeader, partCells.slice(0, 10));
   console.log("\nPart rows of the lines of the direct positions:");
   const directKeys = new Set(
@@ -2046,7 +2296,7 @@ function main() {
     partHeader,
     partCells.filter((cells) => directKeys.has(cells[0])),
   );
-  console.log("\nMeasures, B5:B12:");
+  console.log("\nMeasures, B5:B13:");
   table(
     ["measure", "value"],
     MEASURES.map((name, i) => [name, measures[i]]),
@@ -2103,7 +2353,7 @@ function main() {
   check(x.cell("A26") === "equity" && x.cell("B26") === "value", "the header of the equity block stays");
   check(
     x.block(5, OVERLAP_AT, x.getMaxRows() - 4, 4).every((c) => c.every((v) => v === "")),
-    "O5:R is empty when the answer holds no pair",
+    "P5:S is empty when the answer holds no pair",
   );
   console.log(`  B1: ${x.cell("B1")}; grid ${x.getMaxRows()} rows, ${x.getMaxColumns()} columns`);
 
@@ -2124,7 +2374,9 @@ function main() {
     "the equity measures of run 1 are back",
   );
   check(
-    x.block(5 + funds.length, FUND_AT, x.getMaxRows() - 4 - funds.length, 10).every((c) => c.every((v) => v === "")),
+    x
+      .block(5 + funds.length, FUND_AT, x.getMaxRows() - 4 - funds.length, FUND_FIELDS.length)
+      .every((c) => c.every((v) => v === "")),
     "the rows under the last fund are empty",
   );
   check(
@@ -2268,12 +2520,12 @@ function main() {
     rowsNow.map(([start, seconds], n) => [`${15 + n}`, new Date(start).toISOString(), seconds]),
   );
 
-  console.log("\n== Run-time formulas B7 and B8 of the report");
-  const lastFormula = report.cell("B7");
-  const averageFormula = report.cell("B8");
+  console.log("\n== Run-time formulas B8 and B9 of the report");
+  const lastFormula = report.cell("B8");
+  const averageFormula = report.cell("B9");
   check(
-    report.cell("A7") === "Last run time" && report.cell("A8") === "Average (last 10)",
-    "A7 and A8 hold the labels of the run time",
+    report.cell("A8") === "Last run time" && report.cell("A9") === "Average (last 10)",
+    "A8 and A9 hold the labels of the run time",
   );
   const known = (seconds) => {
     const sheet = new FakeSheet(EXPOSURE_TAB, 30, 4, []);
@@ -2296,20 +2548,431 @@ function main() {
     const sheet = known(c.seconds);
     const last = calculate(lastFormula, sheet);
     const average = calculate(averageFormula, sheet);
-    check(c.last === "" ? last === "" : near(last, c.last), `${c.name}: B7 is ${JSON.stringify(c.last)} (${last})`);
+    check(c.last === "" ? last === "" : near(last, c.last), `${c.name}: B8 is ${JSON.stringify(c.last)} (${last})`);
     check(
       c.average === "" ? average === "" : near(average, c.average),
-      `${c.name}: B8 is ${JSON.stringify(c.average)} (${average})`,
+      `${c.name}: B9 is ${JSON.stringify(c.average)} (${average})`,
     );
     formulaRows.push([c.name, c.seconds.join(", ") || "(none)", JSON.stringify(last), JSON.stringify(average)]);
   }
   const recorded = runRows().map(([, seconds]) => seconds);
-  check(near(calculate(lastFormula, x), recorded[0]), "B7 gives B15 of the Exposure tab after eleven good runs");
+  check(near(calculate(lastFormula, x), recorded[0]), "B8 gives B15 of the Exposure tab after eleven good runs");
   check(
     near(calculate(averageFormula, x), recorded.reduce((a, b) => a + b, 0) / 10),
-    "B8 gives the average of the 10 kept runs of the Exposure tab",
+    "B9 gives the average of the 10 kept runs of the Exposure tab",
   );
-  table(["block", "seconds, newest first", "B7", "B8"], formulaRows);
+  table(["block", "seconds, newest first", "B8", "B9"], formulaRows);
+
+  console.log("\n== Describe a fund: the sidebar page and the report text");
+  logFrom = state.log.length;
+  context.showMixSidebar();
+  check(state.sidebars.length === 1, "Describe a fund opens one sidebar");
+  check(
+    state.sidebars[0].file === "sidebar" && state.sidebars[0].title === "Describe a fund",
+    "the sidebar shows sidebar.html with the title Describe a fund",
+  );
+  check(
+    state.log.slice(logFrom).every((e) => e.sheet === undefined),
+    "the sidebar opens with no change to a tab",
+  );
+  check(state.documentProperties.size === 0, "the sidebar opens with no property write");
+  const page = readFileSync(SIDEBAR_FILE, "utf8");
+  const pageScript = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join("\n");
+  const pageText = page
+    .replace(/<script>[\s\S]*?<\/script>/g, "")
+    .replace(/<style>[\s\S]*?<\/style>/g, "")
+    .replace(/<[^>]+>/g, " ");
+  check(!/<script[^>]*\ssrc=|<link\b|https?:\/\//i.test(page), "the sidebar loads no file and names no address");
+  check(
+    !/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(page),
+    "the sidebar puts each text into the page as text, never as HTML",
+  );
+  const serverCalls = [...new Set([...pageScript.matchAll(/call\("(\w+)"/g)].map((m) => m[1]))];
+  check(
+    serverCalls.length === 5 && serverCalls.every((name) => typeof context[name] === "function"),
+    `each server function that the sidebar calls exists (${serverCalls.join(", ")})`,
+  );
+  const jargon = /\bAPI\b|\broute\b|payload|schema|\bparts\b|unknown class|position id/i;
+  check(!jargon.test(pageText), "the text of the sidebar holds no API words");
+  check(
+    !/\bAPI\b|\broute\b|payload|schema|position id/i.test(pageScript),
+    "the messages of the sidebar script hold no API words",
+  );
+  const reportTexts = JSON.parse(created[REPORT_TAB])
+    .grid.flat()
+    .filter((value) => typeof value === "string")
+    .flatMap((value) => (value.startsWith("=") ? splitLiterals(value).literals : [value]));
+  const wordy = reportTexts.filter((text) => jargon.test(text));
+  check(wordy.length === 0, `no text of the report holds an API word (${wordy.join(" | ")})`);
+  const spill = report.cell(SPILL_CELL);
+  const unseenAt = spill.indexOf(`HSTACK("","${UNSEEN_TITLE}")`);
+  check(
+    unseenAt > 0 && unseenAt < spill.indexOf('HSTACK("","Not stocks")'),
+    `the section ${UNSEEN_TITLE} comes above Not stocks`,
+  );
+  for (const text of [
+    `"${ADD_MIX_NOTE}"`,
+    "uu>=0.01",
+    '"Not described"',
+    '" (substitute)"',
+    '"Mix entered "&TEXT(d,"mmmm yyyy")',
+    'IF(TODAY()-d>182," — check the fact sheet","")',
+  ]) {
+    check(spill.includes(text), `${SPILL_CELL} holds ${text}`);
+  }
+  const note = report.cell(NOTE_CELL);
+  check(
+    report.cell("A2") === "Status" &&
+      note.includes('n&IF(n=1," holding ("," holdings (")') &&
+      note.includes('" of your portfolio) "&IF(n=1,"is a fund","are funds")&" we can\'t see inside."'),
+    `${NOTE_CELL}, under the status cell, counts the holdings that we can't see inside and their share`,
+  );
+
+  console.log("\n== Describe a fund: the sidebar data and the ticker check");
+  logFrom = state.log.length;
+  state.fetchHandler = null;
+  let data = context.mixSidebarData();
+  check(
+    JSON.stringify(data.holdings.map((h) => h.key)) === JSON.stringify([BOND, PLAN_FUND]),
+    `the drop-down lists the holdings that we can't see inside (${data.holdings.map((h) => h.key).join(", ")})`,
+  );
+  check(
+    data.holdings.every((h) => h.mix === null) && data.holdings[0].label === `${BOND} – Example Treasury bond`,
+    "no holding has a mix yet, and a holding with a symbol shows the symbol and the description",
+  );
+  check(
+    JSON.stringify(data.others.map((h) => h.key)) === JSON.stringify(EXPECTED.map((e) => e.id)) &&
+      data.orphans.length === 0,
+    "each holding can take a saved mix, and no saved mix is without a holding",
+  );
+  fetches = state.fetchCalls.length;
+  state.fetchHandler = (url) => {
+    const ticker = url.slice(FUND_URL.length);
+    const error = (code) => fakeResponse(404, JSON.stringify({ error: { code, message: "Invented.", status: 404 } }));
+    if (ticker === FUND_A) {
+      return fakeResponse(200, JSON.stringify({ fund: { ticker: FUND_A, seriesName: "EXAMPLE INDEX FUND A" } }));
+    }
+    if (ticker === STOCK) return error("not_a_fund");
+    if (ticker === "QQQQX") return error("fund_not_found");
+    return fakeResponse(503, "busy");
+  };
+  const found = context.lookupFund(" $voo ");
+  check(
+    JSON.stringify(found) === JSON.stringify({ ok: true, ticker: FUND_A, text: "EXAMPLE INDEX FUND A" }),
+    `a fund ticker shows the fund name (${JSON.stringify(found)})`,
+  );
+  const ask = state.fetchCalls.at(-1);
+  check(
+    ask.url === `${FUND_URL}${FUND_A}` && ask.options.method === "get" && ask.options.payload === undefined,
+    "the check reads the fund route of the normalized ticker, with no body",
+  );
+  check(
+    Object.keys(ask.options.headers).join() === "Authorization" &&
+      ask.options.headers.Authorization === `Bearer ${API_KEY}`,
+    "the check sends the key of the person alone",
+  );
+  check(
+    JSON.stringify(context.lookupFund("aapl")) ===
+      JSON.stringify({ ok: true, ticker: STOCK, text: "A company stock. It counts as that stock." }),
+    "a company ticker shows that it counts as a stock",
+  );
+  check(
+    JSON.stringify(context.lookupFund("qqqqx")) ===
+      JSON.stringify({ ok: false, ticker: "QQQQX", text: "We don't know this ticker." }),
+    "a ticker that the service does not know shows that we don't know it",
+  );
+  check(
+    context.lookupFund("ZZZZ").text === "We couldn't check this ticker right now. You can still save it.",
+    "another answer shows that the check failed",
+  );
+  const checked = state.fetchCalls.length;
+  check(
+    context.lookupFund("not a ticker").ok === false && state.fetchCalls.length === checked,
+    "a text that is not a ticker sends no request",
+  );
+  state.userProperties.delete(KEY_PROPERTY);
+  const noKey = context.lookupFund(FUND_A);
+  check(
+    !noKey.ok && noKey.text.includes("Set API key") && state.fetchCalls.length === checked,
+    "with no key, the check names Set API key and sends no request",
+  );
+  state.userProperties.set(KEY_PROPERTY, API_KEY);
+  check(state.fetchCalls.length === fetches + 4, "the ticker checks send four requests");
+  check(
+    state.log.slice(logFrom).every((e) => e.sheet === undefined),
+    "the sidebar data and the ticker check change no tab",
+  );
+
+  console.log("\n== Describe a fund: save, link, and delete a mix");
+  state.fetchHandler = null;
+  const refusals = [
+    ["a holding that is not on the Holdings tab", "Example Old Plan Trust", [{ ticker: FUND_A, percent: 10 }]],
+    [
+      "a total over 100%",
+      PLAN_FUND,
+      [
+        { ticker: FUND_A, percent: 60 },
+        { ticker: FUND_B, percent: 50 },
+      ],
+    ],
+    [
+      "a ticker two times",
+      PLAN_FUND,
+      [
+        { ticker: "voo", percent: 10 },
+        { ticker: FUND_A, percent: 20 },
+      ],
+    ],
+    ["21 funds", PLAN_FUND, Array.from({ length: 21 }, (_, n) => ({ ticker: `T${n}`, percent: 1 }))],
+    ["no fund", PLAN_FUND, []],
+    ["a text that is not a ticker", PLAN_FUND, [{ ticker: "not a ticker", percent: 10 }]],
+    ["an empty ticker", PLAN_FUND, [{ ticker: "", percent: 5 }]],
+    ["a percent of 0", PLAN_FUND, [{ ticker: FUND_A, percent: "0" }]],
+    ["a percent that is not a number", PLAN_FUND, [{ ticker: FUND_A, percent: "abc" }]],
+  ];
+  const texts = [
+    "This holding is not on your Holdings tab.",
+    "The total is over 100%. Lower a percent to save.",
+    "VOO is in the mix two times.",
+    "A mix can hold 20 funds at most.",
+    "Add at least one fund.",
+    'Check the ticker "not a ticker".',
+    "Type a ticker in each row.",
+    "Give VOO a percent above 0 and up to 100.",
+    "Give VOO a percent above 0 and up to 100.",
+  ];
+  refusals.forEach(([name, key, rows], n) => {
+    const result = context.saveMix(key, rows);
+    check(!result.ok && result.text === texts[n], `the sidebar refuses ${name} (${result.text})`);
+  });
+  check(state.documentProperties.size === 0, "a refused mix writes no property");
+  const todayText = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const saved = context.saveMix(PLAN_FUND, [
+    { ticker: " voo ", percent: "60", substitute: false },
+    { ticker: "$ivv", percent: 25, substitute: true },
+    { ticker: STOCK, percent: 10 },
+  ]);
+  check(
+    saved.ok && saved.text === "Saved. Choose Refresh to update your report.",
+    "a mix with a total of 95% is saved",
+  );
+  check(
+    [...state.documentProperties.keys()].join() === `${MIX_PREFIX}${PLAN_FUND}`,
+    `the mix is the document property ${MIX_PREFIX}${PLAN_FUND}, the prefix and the key of the holding`,
+  );
+  const stored = state.documentProperties.get(`${MIX_PREFIX}${PLAN_FUND}`);
+  const wantStored = {
+    entered: todayText,
+    parts: [
+      { ticker: FUND_A, percent: 60, substitute: false },
+      { ticker: FUND_B, percent: 25, substitute: true },
+      { ticker: STOCK, percent: 10, substitute: false },
+    ],
+  };
+  check(
+    stored === JSON.stringify(wantStored),
+    `the property holds the entry date of today and the normalized funds (${stored})`,
+  );
+  check(
+    saved.data.holdings.find((h) => h.key === PLAN_FUND)?.mix?.entered === todayText &&
+      !saved.data.others.some((h) => h.key === PLAN_FUND),
+    "the sidebar data holds the new mix, and the holding cannot take another saved mix",
+  );
+  const ORPHAN = "Example Old Plan Trust";
+  const orphanMix = JSON.stringify({
+    entered: "2025-01-15",
+    parts: [{ ticker: FUND_A, percent: 100, substitute: false }],
+  });
+  state.documentProperties.set(`${MIX_PREFIX}${ORPHAN}`, orphanMix);
+  state.documentProperties.set(`${MIX_PREFIX}Example broken mix`, "{not json");
+  data = context.mixSidebarData();
+  check(
+    JSON.stringify(data.orphans) === JSON.stringify([{ key: ORPHAN, mix: JSON.parse(orphanMix) }]),
+    "the sidebar lists the saved mix that matches no holding, and skips a value that is not a mix",
+  );
+  check(
+    context.linkMix(ORPHAN, PLAN_FUND).text === "That holding has a mix already." &&
+      context.linkMix(ORPHAN, "Not a holding").text === "Pick a holding from your Holdings tab." &&
+      context.linkMix("Example broken mix", BOND).text === "We can't find this mix.",
+    "a link to a holding with a mix, to a key with no holding, and of a broken value is refused",
+  );
+  const linked = context.linkMix(ORPHAN, BOND);
+  check(
+    linked.ok &&
+      state.documentProperties.get(`${MIX_PREFIX}${BOND}`) === orphanMix &&
+      !state.documentProperties.has(`${MIX_PREFIX}${ORPHAN}`),
+    "a link moves the mix to the holding and keeps its entry date",
+  );
+  check(
+    linked.data.holdings.find((h) => h.key === BOND)?.mix?.entered === "2025-01-15" && linked.data.orphans.length === 0,
+    "after the link, the holding shows the mix and no mix is without a holding",
+  );
+  const removed = context.deleteMix(BOND);
+  check(removed.ok && !state.documentProperties.has(`${MIX_PREFIX}${BOND}`), "a delete removes the mix");
+  state.documentProperties.set(`${MIX_PREFIX}${ORPHAN}`, orphanMix);
+  check(
+    state.log.slice(logFrom).every((e) => e.sheet === undefined),
+    "the save, the link, and the delete change no tab",
+  );
+
+  console.log(
+    `\n== Run 15: a holding with a mix sends parts, with ${LIVE_PARTS ? "a real request" : "a synthetic answer"}`,
+  );
+  state.fetchHandler = LIVE_PARTS ? liveFetch : offlineFetch;
+  fetches = state.fetchCalls.length;
+  logFrom = state.log.length;
+  pause(2);
+  const runMix = timedRun();
+  check(state.fetchCalls.length === fetches + 1, "run 15 sends one request");
+  checkNoTabChange(reportState, logFrom, "run 15");
+  const mixBody = JSON.parse(state.fetchCalls.at(-1).options.payload);
+  const mixIds = mixBody.positions.map((p) => p.id);
+  const planWeight = EXPECTED.find((e) => e.id === PLAN_FUND).sum / EXPECTED_TOTAL;
+  const planSent = mixBody.positions.find((p) => p.id === PLAN_FUND);
+  check(
+    JSON.stringify(Object.keys(planSent)) === '["id","weight","parts"]' && near(planSent.weight, planWeight),
+    "the holding with a mix sends id, weight, and parts, and no ticker",
+  );
+  const wantParts = [
+    [FUND_A, 0.6],
+    [FUND_B, 0.25],
+    [STOCK, 0.1],
+  ];
+  check(
+    planSent.parts.length === 3 &&
+      planSent.parts.every(
+        (p, n) =>
+          Object.keys(p).join() === "ticker,weight" && p.ticker === wantParts[n][0] && p.weight === wantParts[n][1],
+      ),
+    "each part holds the ticker and the share of the holding: the percent divided by 100",
+  );
+  check(
+    JSON.stringify(mixIds) === JSON.stringify(EXPECTED.map((e) => e.id)) &&
+      mixBody.positions.every((p) => p.id === PLAN_FUND || !("parts" in p)),
+    "the body holds the same holdings in the same order, no other parts, and no saved mix without a holding",
+  );
+  check(
+    numbersOf(mixBody).every((n) => n > 0 && n <= 1),
+    "each number of the body is a weight, and no dollar value appears",
+  );
+  check(x.cell("B1") === "OK", `run 15: B1 is OK (B1 holds "${x.cell("B1")}")`);
+  checkRecorded("run 15", runMix);
+  const mixAnswer = JSON.parse(answerText);
+  const unknownLines = mixAnswer.lines.filter((l) => l.class === "unknown");
+  check(
+    typeof mixAnswer.measures.unknownWeight === "number" &&
+      Math.abs(mixAnswer.measures.unknownWeight - unknownLines.reduce((a, l) => a + l.weight, 0)) < 1e-9,
+    "unknownWeight is the sum of the weights of the lines of the class unknown",
+  );
+  const planFunds = mixAnswer.funds.filter((f) => f.id === PLAN_FUND);
+  check(
+    JSON.stringify(planFunds.map((f) => f.ticker).sort()) === JSON.stringify([FUND_A, FUND_B].sort()),
+    "the funds block holds one element for each fund of the mix, under the holding id, and none for the stock",
+  );
+  check(
+    planFunds.every(
+      (f) =>
+        f.partWeight === (f.ticker === FUND_A ? 0.6 : 0.25) && Math.abs(f.weight - planWeight * f.partWeight) < 1e-9,
+    ),
+    "each element of a fund of the mix holds its share and the weight of the holding times the share",
+  );
+  check(
+    mixAnswer.funds.filter((f) => f.id !== PLAN_FUND).every((f) => f.partWeight === null),
+    "each fund that is not in a mix holds partWeight null",
+  );
+  const restLine = mixAnswer.lines.find((l) => l.key === `id:${PLAN_FUND}`);
+  check(
+    restLine?.name === `${PLAN_FUND} (not described)` &&
+      restLine.class === "unknown" &&
+      Math.abs(restLine.weight - planWeight * 0.05) < 1e-9 &&
+      restLine.stockWeight === 0 &&
+      JSON.stringify(Object.keys(restLine.sources)) === JSON.stringify([PLAN_FUND]),
+    "the 5% that the mix does not describe enters as one line of the class unknown, named (not described)",
+  );
+  const stockLine = mixAnswer.lines.find((l) => l.ticker === STOCK);
+  check(
+    (stockLine?.stockSources[PLAN_FUND] ?? 0) > planWeight * 0.1 - 1e-9,
+    "the stock of the mix and the stock inside its funds come through the holding id",
+  );
+  check(
+    mixAnswer.lines.every(
+      (l) =>
+        Object.keys(l.sources).every((id) => mixIds.includes(id)) &&
+        Object.keys(l.stockSources).every((id) => mixIds.includes(id)),
+    ),
+    "each source of each line is a holding id",
+  );
+  const pairKeys = mixAnswer.overlaps.map((o) => o.ids.join("|"));
+  check(
+    mixAnswer.overlaps.every((o) => o.ids.every((id) => mixIds.includes(id))) &&
+      new Set(pairKeys).size === pairKeys.length &&
+      pairKeys.includes(`${FUND_A}|${PLAN_FUND}`),
+    "the overlaps block gives one pair for each pair of holdings, the holding with a mix too",
+  );
+  check(x.cell("B13") === mixAnswer.measures.unknownWeight, "B13 holds unknownWeight");
+  const fundsNow = x.block(5, FUND_AT, mixAnswer.funds.length, FUND_FIELDS.length);
+  check(
+    mixAnswer.funds.every((f, n) => fundsNow[n][FUND_FIELDS.length - 1] === (f.partWeight ?? "")),
+    "column N holds partWeight, and it is empty for a fund that is not in a mix",
+  );
+  const serial = context.daySerial(todayText);
+  const wantMix = [
+    [PLAN_FUND, planSent.weight, serial, FUND_A, 0.6, false],
+    [PLAN_FUND, planSent.weight, serial, FUND_B, 0.25, true],
+    [PLAN_FUND, planSent.weight, serial, STOCK, 0.1, false],
+  ];
+  const mixCells = x.block(5, MIX_AT, 4, MIX_FIELDS.length);
+  check(
+    JSON.stringify(mixCells.slice(0, 3)) === JSON.stringify(wantMix) && mixCells[3].every((v) => v === ""),
+    `U5:Z holds one row for each fund of the mix, with the entry date and the substitute flag (${JSON.stringify(mixCells.slice(0, 3))})`,
+  );
+  const mixParts = expectedParts(mixAnswer.lines, mixIds);
+  const mixPartCells = x.block(5, LINE_AT, mixParts.length, LINE_FIELDS.length + 1 + mixIds.length);
+  check(
+    JSON.stringify(mixPartCells) === JSON.stringify(mixParts),
+    "the part rows hold the lines of the answer with parts",
+  );
+  const coverage = calculate(report.cell(COVERAGE_CELL), x);
+  const wantCoverage = LIVE_PARTS
+    ? `These measures cover ${((1 - mixAnswer.measures.unknownWeight) * 100).toFixed(1)}% of your portfolio.`
+    : "These measures cover 89.5% of your portfolio.";
+  check(coverage === wantCoverage, `${COVERAGE_CELL} shows the coverage label "${wantCoverage}" (${coverage})`);
+  console.log(`  ${COVERAGE_CELL}: ${coverage}`);
+  console.log("\nMix block, U5:Z:");
+  table(MIX_FIELDS, mixCells.slice(0, 3));
+  console.log("\nFunds of the mix in the funds block:");
+  table(
+    ["id", "ticker", "partWeight", "weight"],
+    planFunds.map((f) => [f.id, f.ticker, f.partWeight, f.weight]),
+  );
+
+  console.log("\n== Run 16: an answer with no unknownWeight and no partWeight");
+  state.documentProperties.clear();
+  const oldShape = JSON.parse(liveText);
+  delete oldShape.measures.unknownWeight;
+  for (const fund of oldShape.funds) delete fund.partWeight;
+  state.fetchHandler = () => fakeResponse(200, JSON.stringify(oldShape));
+  logFrom = state.log.length;
+  pause(2);
+  const runOld = timedRun();
+  check(x.cell("B1") === "OK", `run 16: B1 is OK (B1 holds "${x.cell("B1")}")`);
+  checkRecorded("run 16", runOld);
+  checkNoTabChange(reportState, logFrom, "run 16");
+  check(x.cell("B13") === "", "B13 is empty when the answer holds no unknownWeight");
+  check(
+    calculate(report.cell(COVERAGE_CELL), x) === "",
+    `${COVERAGE_CELL} shows no coverage label when the answer holds no unknownWeight`,
+  );
+  check(
+    partFaults(x) === 0 &&
+      x.block(5, MIX_AT, x.getMaxRows() - 4, MIX_FIELDS.length).every((c) => c.every((v) => v === "")),
+    "the part rows of run 1 are back, and the mix block is empty",
+  );
 
   /**
    * The accepted state of the report tab with other values in the two cells
@@ -2414,8 +3077,8 @@ function main() {
 
   console.log("\n== Run 12: tabs with an older layout version are replaced and keep both typed values");
   keptExposure.grid[2][1] = layoutVersion - 1;
-  keptReport.grid[20][1] = 0.03;
-  keptReport.grid[21][1] = 0.25;
+  keptReport.grid[21][1] = 0.03;
+  keptReport.grid[22][1] = 0.25;
   runStarts.length = 0;
   logFrom = state.log.length;
   pause(2);
@@ -2451,7 +3114,7 @@ function main() {
   checkRecorded("run 13", runThirteen);
 
   console.log("\n== Run 14: the hidden tab is absent, so the script replaces the report tab too");
-  book.tab(REPORT_TAB).grid[20][1] = 0.04;
+  book.tab(REPORT_TAB).grid[21][1] = 0.04;
   book.sheets.splice(book.sheets.indexOf(book.tab(EXPOSURE_TAB)), 1);
   runStarts.length = 0;
   logFrom = state.log.length;
@@ -2473,8 +3136,14 @@ function main() {
     state.alerts.every((text) => !text.includes(API_KEY)),
     "no message holds the key",
   );
-  check(liveRequests === (OFFLINE ? 0 : 1), `the harness sent ${OFFLINE ? "no" : "one"} real request`);
-  console.log(`\nAll ${passed} assertions passed. The harness sent ${OFFLINE ? "no" : "one"} real request.`);
+  check(
+    [...state.documentProperties].every(([name, value]) => name.startsWith(MIX_PREFIX) && !value.includes(API_KEY)),
+    "each document property is a mix, and no document property holds the key",
+  );
+  check(liveRequests === LIVE_LIMIT, `the harness sent ${LIVE_LIMIT} real requests (${liveRequests})`);
+  const sentText = ["no real request", "one real request", "two real requests"][LIVE_LIMIT];
+  const partsNote = LIVE_PARTS ? "" : " The request with parts got a synthetic answer.";
+  console.log(`\nAll ${passed} assertions passed. The harness sent ${sentText}.${partsNote}`);
 }
 
 try {

@@ -28,9 +28,20 @@ the API requires a free API Key.
 
 Lost your key? Sign up again with the same email address.
 
+## Describe a fund
+
+Some funds, such as the trust funds of many 401(k) plans, publish no holdings that the add-on can read. The report lists
+them under **Funds we can't see inside**. To add the fund mix of such a holding, choose **Extensions > Holdings
+Concentration for Tiller > Describe a fund**. Pick the holding, and type the ticker and the percent of each fund from
+its fact sheet. Then choose **Refresh**.
+
+The add-on keeps each mix in the document properties of the spreadsheet. The name of the property is `FUND_MIX:` and the
+symbol of the holding, or its description when it has no symbol. Each editor of the spreadsheet can read a saved mix.
+
 ## Limits
 
 - Each key can make up to 300 requests per minute. One refresh uses one request.
+- Each ticker check in **Describe a fund** uses one request.
 - One refresh can include up to 200 different holdings.
 
 ## Support
