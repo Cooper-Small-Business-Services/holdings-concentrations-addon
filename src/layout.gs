@@ -33,7 +33,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads. The next refresh then replaces the two
  * tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 4;
+const LAYOUT_VERSION = 5;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -125,9 +125,10 @@ const OTHER_TITLE = "Other holdings";
 const HOLDINGS_TITLE = "Your holdings";
 
 /**
- * The first sentence of the report tab, in B1.
+ * The disclaimer of the report tab, in B1.
  */
-const DISCLAIMER = "This report is not investment advice.";
+const DISCLAIMER =
+  "This report is intended for informational purposes only. It does not constitute investment advice. The presented data might be inaccurate, incomplete, or out of date.";
 
 /**
  * The first row of the spill of the fund table, in column D, and the last

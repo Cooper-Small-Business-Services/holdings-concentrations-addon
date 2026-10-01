@@ -12,10 +12,13 @@
     "test": "node test/check.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "push": "clasp push",
     "deploy:dry-run": "node scripts/deploy.mjs --dry-run",
     "build:graphics": "node listing/graphics/src/build.mjs"
   },
   "devDependencies": {
+    "@google/clasp": "^3.4.1",
+    "@types/google-apps-script": "^2.0.13",
     "playwright": "1.62.1",
     "prettier": "3.9.6"
   }

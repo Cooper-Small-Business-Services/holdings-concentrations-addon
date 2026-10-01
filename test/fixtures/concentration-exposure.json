@@ -8,7 +8,7 @@
     },
     {
       "range": "A3:B3",
-      "values": [["layoutVersion", 4]]
+      "values": [["layoutVersion", 5]]
     },
     {
       "range": "A4:A13",

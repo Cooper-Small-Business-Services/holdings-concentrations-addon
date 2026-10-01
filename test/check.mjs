@@ -3152,7 +3152,8 @@ function main() {
     `each label says security or securities, not stock, except the group of bonds (${stockWords.join(" | ")})`,
   );
   check(
-    report.cell(DISCLAIMER_CELL) === "This report is not investment advice." &&
+    report.cell(DISCLAIMER_CELL) ===
+      "This report is intended for informational purposes only. It does not constitute investment advice. The presented data might be inaccurate, incomplete, or out of date." &&
       report.cell(SUBTITLE_CELL) === "Your securities by company, with a look inside each fund.",
     `${DISCLAIMER_CELL} holds the disclaimer, and ${SUBTITLE_CELL} holds the subtitle`,
   );

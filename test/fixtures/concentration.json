@@ -4,7 +4,12 @@
   "cells": [
     {
       "range": "A1:B1",
-      "values": [["Concentration", "This report is not investment advice."]]
+      "values": [
+        [
+          "Concentration",
+          "This report is intended for informational purposes only. It does not constitute investment advice. The presented data might be inaccurate, incomplete, or out of date."
+        ]
+      ]
     },
     {
       "range": "B2",
