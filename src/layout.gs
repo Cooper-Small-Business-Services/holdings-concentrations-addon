@@ -15,12 +15,21 @@
  * overlap minimum. The formulas read Concentration.Exposure and the Holdings
  * tab.
  *
+ * The hidden tab also holds the chart block after the sources block, and
+ * the anchor cell after the chart block. Each cell of the block is a
+ * formula that reads the company table of the report spill. The anchor cell
+ * holds the row of the report tab where the bar chart starts: the first row
+ * of the band of blank rows under the chart header row of the report spill.
+ * drawChart draws the bar chart from the block at that row. Each good
+ * refresh calls it, and onEdit calls it after an edit of the threshold cell.
+ *
  * A refresh calls ensureTabs before the request. The function compares the
  * layout version of the hidden tab with LAYOUT_VERSION. When the two are
  * equal, it creates the report tab if that tab is absent. When they differ,
  * or when the hidden tab is absent, it replaces both tabs and keeps the two
- * values that the person typed. Delete the hidden tab to get the layout of
- * both tabs again on the next refresh.
+ * values that the person typed. Each time it replaces a tab, its last step
+ * writes the chart block and the anchor cell, after both tabs exist. Delete
+ * the hidden tab to get the layout of both tabs again on the next refresh.
  */
 
 /**
@@ -33,7 +42,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads. The next refresh then replaces the two
  * tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 5;
+const LAYOUT_VERSION = 8;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -136,6 +145,64 @@ const DISCLAIMER =
  */
 const FUND_ROW = 4;
 const FUND_LAST_ROW = REPORT_ROW - 1;
+
+/**
+ * The header of the company table of the report spill, from column A. One
+ * column for each id of the stock fund block follows it. The chart block
+ * finds the Company column, the Direct column, and the first fund column by
+ * this list.
+ */
+const COMPANY_COLUMNS = ["Rank", "Company", "Ticker", "Value", "% of portfolio", "", "Direct"];
+
+/**
+ * The colors of the series of the bar chart: one for Direct, one for each of
+ * the CHART_FUNDS funds in rank order, and one gray for Other funds. The
+ * colors are fixed, so the largest fund always gets the first fund color.
+ * Each pair of fund colors differs in OKLCH lightness by 0.06 or more. Each
+ * two neighbors of the stack, from Direct to Other funds, differ by an OKLab
+ * distance of 8 or more under simulated protan vision and simulated deutan
+ * vision, and by 15 or more under normal vision.
+ */
+const CHART_DIRECT_COLOR = "#2a78d6";
+const CHART_FUND_COLORS = ["#f26e3b", "#037952", "#eba007", "#c75d87", "#036503"];
+const CHART_OTHER_COLOR = "#a9a7a0";
+
+/**
+ * The width in pixels of each column of the report tab from A to F.
+ */
+const REPORT_WIDTHS = { A: 250, B: 300, C: 150, D: 175, E: 110, F: 180 };
+
+/**
+ * The size of the bar chart in pixels, and the count of blank rows of the
+ * band that the report spill holds for the chart. The chart spans the
+ * columns A to D of the report tab. The band holds the height of the chart
+ * at the default row height of 21 pixels, and one more row as a margin.
+ */
+const CHART_WIDTH = REPORT_WIDTHS.A + REPORT_WIDTHS.B + REPORT_WIDTHS.C + REPORT_WIDTHS.D;
+const CHART_HEIGHT = 520;
+const CHART_BAND_ROWS = Math.ceil(CHART_HEIGHT / 21) + 1;
+
+/**
+ * The largest length of the series name of a fund. A fund with no symbol
+ * has its description as its id, and the name is the start of it.
+ */
+const CHART_NAME_LENGTH = 24;
+
+/**
+ * The parts of the text of the chart header row of the report spill: the
+ * text before the threshold, the count of decimals of the threshold as a
+ * percent, and the text after it. chartHeading builds the expression of the
+ * spill formula from these parts, and headingText builds the text that
+ * drawChart expects in that row, so the two texts agree.
+ */
+const CHART_HEADING = { before: "Companies at or over ", decimals: 2, after: " of the portfolio, by source" };
+
+/**
+ * The time in milliseconds that drawChart waits before it reads the anchor
+ * cell again, and the largest total time of the wait.
+ */
+const CHART_WAIT_STEP = 500;
+const CHART_WAIT_LIMIT = 20000;
 
 /**
  * A reference to a range of the tab Concentration.Exposure.
@@ -365,9 +432,12 @@ const NO_NAME = "No symbol or description";
 /**
  * The formula of the report spill, in column A of row REPORT_ROW. The spill
  * holds these blocks from the top: the section Your holdings, the note on
- * trusts, the header of the company table, the company table, the fund
- * overlap list, the section of the funds not looked through, the section of
- * the other holdings, and the total.
+ * trusts, the header of the company table, the company table, the chart
+ * header row, the band of CHART_BAND_ROWS blank rows under which the bar
+ * chart sits, the fund overlap list, the section of the funds not looked
+ * through, the section of the other holdings, and the total. The chart
+ * header row holds the text of chartHeading in column A, so the anchor cell
+ * of the hidden tab finds it.
  *
  * The section Your holdings reads the Holdings tab alone, so it changes with
  * no refresh. Each Holdings row with a number in Value goes into the group of
@@ -534,8 +604,10 @@ IFNA(VSTACK("${HOLDINGS_TITLE}",
  yours,
  "",
  "${TRUST_NOTE}",
- HSTACK({"Rank","Company","Ticker","Value","% of portfolio","","Direct"},TRANSPOSE(f)),
+ HSTACK({${COMPANY_COLUMNS.map((text) => `"${text}"`).join(",")}},TRANSPOSE(f)),
  top,rest,"",
+ ${chartHeading("thr")},
+ MAKEARRAY(${CHART_BAND_ROWS},1,LAMBDA(i,j,"")),
  HSTACK("","Fund overlap"),
  HSTACK("","${OVERLAP_NOTE}"),
  {"","Fund 1","Fund 2","","Overlap","Shared securities","Fund 1 weight","Fund 2 weight"},
@@ -554,13 +626,255 @@ IFNA(VSTACK("${HOLDINGS_TITLE}",
 }
 
 /**
+ * The text of the chart header row of the report spill, as an expression of
+ * a formula. `threshold` is the expression of the threshold, such as a name
+ * of a LET or a cell reference. The text holds the threshold as a percent
+ * with CHART_HEADING.decimals decimals, so it changes with each edit of the
+ * threshold cell.
+ */
+function chartHeading(threshold) {
+  const format = `0.${"0".repeat(CHART_HEADING.decimals)}%`;
+  return `"${CHART_HEADING.before}"&TEXT(${threshold},"${format}")&"${CHART_HEADING.after}"`;
+}
+
+/**
+ * The text that the chart header row of the report spill shows for a
+ * threshold, a share from 0 to 1. The percent has CHART_HEADING.decimals
+ * decimals, and a half rounds up. The function first rounds the percent to
+ * 15 significant digits, so a binary error such as 100.49999999999999 for
+ * 100.5 does not change the last decimal.
+ */
+function headingText(threshold) {
+  const scale = 10 ** CHART_HEADING.decimals;
+  const percent = Math.round(Number((threshold * 100 * scale).toPrecision(15))) / scale;
+  return `${CHART_HEADING.before}${percent.toFixed(CHART_HEADING.decimals)}%${CHART_HEADING.after}`;
+}
+
+/**
+ * True when the text of the chart header row in the sheet and the text of
+ * headingText are the same after each comma becomes a dot. TEXT in the spill
+ * formula uses the decimal mark of the spreadsheet locale, so a locale with a
+ * comma decimal mark shows 10,00% where headingText gives 10.00%.
+ */
+function sameHeading(shown, heading) {
+  return shown.replaceAll(",", ".") === heading.replaceAll(",", ".");
+}
+
+/**
+ * The formula of the anchor cell of the tab Concentration.Exposure: the row
+ * of the report tab under the chart header row of the report spill, which
+ * is the first row of the band. The formula finds the text of the chart
+ * header row in column A of the report tab, with the threshold cell, and
+ * adds 1. The cell is empty when no row holds the text.
+ */
+function anchorFormula() {
+  const heading = chartHeading(`'${REPORT_TAB}'!$B$${THRESHOLD_ROW}`);
+  return `=IFERROR(XMATCH(${heading},'${REPORT_TAB}'!$A:$A)+1,"")`;
+}
+
+/**
+ * The formulas of the chart block of the tab Concentration.Exposure: the
+ * header row, and the row that each of the CHART_ROWS data rows holds. The
+ * columns are the company name, Direct, CHART_FUNDS fund columns, and Other
+ * funds. The header cells hold the series names. A header cell that holds
+ * an empty string marks a column with no series. writeChartBlock writes the
+ * formulas.
+ *
+ * Each formula reads the company table of the report spill alone, so a
+ * change of the threshold or of the Holdings tab changes the block with no
+ * refresh. h is the row of the header of the company table inside the
+ * spill: the row with Rank in column A and Company in column B. The company
+ * rows under it hold the rank 1, 2, 3, and so on in column A, largest first.
+ * m counts those rows, up to CHART_ROWS. A data row shows the company of its
+ * rank r: its row minus HEADER_ROW. A data row with no company of its rank
+ * is blank.
+ *
+ * g holds the fund columns of the company rows, and s holds the sum of each
+ * fund column. The order o puts the funds with a sum other than 0 first,
+ * largest sum first, and the order of the stock fund block decides a tie.
+ * The fund column k of the block shows the fund at place k of o while k is
+ * not above t, the count of the funds with a sum other than 0, up to
+ * CHART_FUNDS. Its header is the id of the fund, cut to CHART_NAME_LENGTH
+ * characters. The Other funds column adds each fund after place
+ * CHART_FUNDS, and it is blank when nz, the count of the funds with a sum
+ * other than 0, is not above CHART_FUNDS.
+ *
+ * The header of the Direct column is empty when the direct weights of the
+ * company rows add up to 0. The header of the Other funds column is empty
+ * when nz is not above CHART_FUNDS. Each header is empty when the company
+ * table holds no company.
+ */
+function chartFormulas() {
+  const spill = (letter) => `'${REPORT_TAB}'!$${letter}$${REPORT_ROW}:$${letter}`;
+  const company = (name) => spill(columnLetter(COMPANY_COLUMNS.indexOf(name) + 1));
+  const funds = `'${REPORT_TAB}'!$${columnLetter(COMPANY_COLUMNS.length + 1)}$${REPORT_ROW}:$${columnLetter(REPORT_COLUMNS)}`;
+  const row = `r,ROW()-${HEADER_ROW},`;
+  const find = `sa,${spill("A")},
+h,XMATCH(1,ARRAYFORMULA((sa="${COMPANY_COLUMNS[0]}")*(${company("Company")}="Company"))),
+w,CHOOSEROWS(sa,SEQUENCE(MIN(${CHART_ROWS},ROWS(sa)-h),1,h+1)),
+m,SUMPRODUCT((w=SEQUENCE(ROWS(w)))*1),`;
+  const rank = `g,CHOOSEROWS(${funds},SEQUENCE(m,1,h+1)),
+s,BYCOL(g,LAMBDA(c,SUM(c))),
+z,ARRAYFORMULA((s<>0)*1),
+nz,SUM(z),
+t,MIN(${CHART_FUNDS},nz),
+n,COLUMNS(g),
+o,SORT(SEQUENCE(n),TRANSPOSE(z),FALSE,TRANSPOSE(s),FALSE,SEQUENCE(n),TRUE),`;
+  const ranks = Array.from({ length: CHART_FUNDS }, (_, i) => i + 1);
+  const cell = (body) => `=IFERROR(LET(${body}),"")`;
+  return {
+    header: [
+      `="Company"`,
+      cell(`${find}
+IF(m=0,"",IF(SUM(CHOOSEROWS(${company("Direct")},SEQUENCE(m,1,h+1)))=0,"","Direct"))`),
+      ...ranks.map((k) =>
+        cell(
+          `${find}
+IF(m=0,"",LET(${rank}
+IF(${k}>t,"",LEFT(INDEX(${funds},h,INDEX(o,${k})),${CHART_NAME_LENGTH}))))`,
+        ),
+      ),
+      cell(`${find}
+IF(m=0,"",LET(${rank}
+IF(nz<=${CHART_FUNDS},"","Other funds")))`),
+    ],
+    row: [
+      cell(`${row}${find}
+IF(r>m,"",INDEX(${company("Company")},h+r))`),
+      cell(`${row}${find}
+IF(r>m,"",INDEX(${company("Direct")},h+r))`),
+      ...ranks.map((k) =>
+        cell(`${row}${find}
+IF(r>m,"",LET(${rank}
+IF(${k}>t,"",INDEX(g,r,INDEX(o,${k})))))`),
+      ),
+      cell(`${row}${find}
+IF(r>m,"",LET(${rank}
+IF(nz<=${CHART_FUNDS},"",SUM(MAP(SEQUENCE(n),LAMBDA(j,IF(XMATCH(j,o)>${CHART_FUNDS},N(INDEX(g,r,j)),0)))))))`),
+    ],
+  };
+}
+
+/**
+ * The color of the series of the column at an offset of the chart block.
+ */
+function seriesColor(offset) {
+  if (offset === 1) return CHART_DIRECT_COLOR;
+  if (offset <= 1 + CHART_FUNDS) return CHART_FUND_COLORS[offset - 2];
+  return CHART_OTHER_COLOR;
+}
+
+/**
+ * Draw the bar chart of the report tab again from the chart block of the tab
+ * Concentration.Exposure. A good refresh and onEdit call this function. It
+ * uses the spreadsheet alone, and it sends no request. `threshold` is the
+ * threshold that the report spill must show, a share from 0 to 1: the
+ * refresh gives the value of readInputs, and onEdit gives the value of the
+ * edit.
+ *
+ * The function changes nothing when a tab is absent, or when the hidden tab
+ * holds another layout version. Else it calls SpreadsheetApp.flush, so the
+ * block and the anchor cell show the values of the current answer and the
+ * current threshold. Then freshAnchorRow reads the anchor cell and the
+ * chart header row above it. The anchor cell is a formula on the report
+ * spill, and a read right after an edit can run ahead of the calculation of
+ * the spill and give the row of the old threshold. So freshAnchorRow
+ * compares the chart header row with headingText of the threshold, and
+ * waits and reads again while the two differ, for up to CHART_WAIT_LIMIT
+ * milliseconds. When the text never matches, the function changes no chart
+ * and logs one warning.
+ *
+ * Then the function reads the header row of the block. Each column of the
+ * block after the first one whose header cell holds a text is a series:
+ * Direct, a fund column, or Other funds. The first column gives the company
+ * names. Each range of the chart runs from the header row to the last data
+ * row of the block, so it never moves.
+ *
+ * The function builds the new chart first. Then it removes each chart of the
+ * report tab that reads the tab Concentration.Exposure, and it inserts the
+ * new chart. So one chart stays, and an error of the build keeps the old
+ * chart. When no header cell after the first one holds a text, the function
+ * removes the old chart and inserts none.
+ *
+ * The chart anchors at column A of the row in the anchor cell. It spans the
+ * columns A to D, it is CHART_HEIGHT pixels high, and it has no title. It
+ * stacks the series and puts the legend at the top. The total data label of
+ * a stacked chart shows the share of each company at the end of its bar.
+ * The value of a segment shows on hover alone. The axis shows the share of
+ * the portfolio with the number format 0%.
+ */
+function drawChart(book, threshold) {
+  const report = book.getSheetByName(REPORT_TAB);
+  const hidden = book.getSheetByName(EXPOSURE_TAB);
+  if (report === null || hidden === null || hidden.getRange(VERSION_CELL).getValue() !== LAYOUT_VERSION) return;
+  SpreadsheetApp.flush();
+  const heading = headingText(threshold);
+  const row = freshAnchorRow(report, hidden, heading);
+  if (row === null) {
+    console.warn(`The chart did not change: no row of the report showed "${heading}" in ${CHART_WAIT_LIMIT / 1000} s.`);
+    return;
+  }
+  const header = hidden.getRange(HEADER_ROW, CHART_COLUMN, 1, CHART_BLOCK_WIDTH).getValues()[0];
+  const series = header.map((_, offset) => offset).filter((offset) => offset > 0 && cellText(header[offset]) !== "");
+  let chart = null;
+  if (series.length > 0) {
+    const builder = report.newChart().asBarChart();
+    for (const offset of [0, ...series]) {
+      builder.addRange(hidden.getRange(HEADER_ROW, CHART_COLUMN + offset, CHART_ROWS + 1, 1));
+    }
+    builder.setNumHeaders(1);
+    builder.setStacked();
+    builder.setColors(series.map(seriesColor));
+    builder.setPosition(row, 1, 0, 0);
+    builder.setOption("useFirstColumnAsDomain", true);
+    builder.setOption("legend", { position: "top" });
+    builder.setOption("hAxis", { format: "0%" });
+    builder.setOption("annotations.total.enabled", true);
+    builder.setOption("width", CHART_WIDTH);
+    builder.setOption("height", CHART_HEIGHT);
+    chart = builder.build();
+  }
+  for (const old of report.getCharts()) {
+    if (old.getRanges().some((range) => range.getSheet().getName() === EXPOSURE_TAB)) report.removeChart(old);
+  }
+  if (chart !== null) report.insertChart(chart);
+}
+
+/**
+ * The row of the anchor cell of the tab Concentration.Exposure when column A
+ * of the report tab holds the text `heading` in the row above it, as
+ * sameHeading compares them, else null.
+ * The function reads the anchor cell and that cell of the report tab. While
+ * the text differs, it waits CHART_WAIT_STEP milliseconds with
+ * Utilities.sleep and reads the two cells again, until the total wait
+ * reaches CHART_WAIT_LIMIT milliseconds.
+ */
+function freshAnchorRow(report, hidden, heading) {
+  for (let waited = 0; ; waited += CHART_WAIT_STEP) {
+    const row = hidden.getRange(FIRST_DATA_ROW, ANCHOR_COLUMN).getValue();
+    const fresh =
+      Number.isInteger(row) &&
+      row > 1 &&
+      row <= report.getMaxRows() &&
+      sameHeading(cellText(report.getRange(row - 1, 1).getValue()), heading);
+    if (fresh) return row;
+    if (waited >= CHART_WAIT_LIMIT) return null;
+    Utilities.sleep(CHART_WAIT_STEP);
+  }
+}
+
+/**
  * The layout of the tab Concentration.Exposure. The cells hold the layout
  * version and the labels. The refresh writes the status, the time, the
  * answer, the mix block, the unseen block, the stock fund block, the own
  * block, the group block, and the direct weights. A good refresh also writes
  * its start time and its seconds into the run-time block A15:B24, newest
  * first. The grid holds the source column of each position up to
- * MAX_POSITIONS. One narrow empty column separates each block from the next.
+ * MAX_POSITIONS, then the columns of the chart block, then the anchor
+ * column. One narrow empty column separates each block from the next. The
+ * layout holds the column widths and the formats of the chart block and the
+ * label of the anchor cell. writeChartBlock writes the formulas of the block
+ * and of the anchor cell.
  */
 function exposureLayout() {
   const x = exposureColumns();
@@ -570,10 +884,11 @@ function exposureLayout() {
   const data = (name) => `${name}${FIRST_DATA_ROW}:${name}`;
   const fund = (name) => letter(FUND_COLUMN + FUND_FIELDS.indexOf(name));
   const lastMeasure = FIRST_DATA_ROW + MEASURE_NAMES.length - 1;
+  const chartLast = CHART_COLUMN + CHART_BLOCK_WIDTH - 1;
   return {
     name: EXPOSURE_TAB,
     rows: TAB_ROWS,
-    columns: SOURCE_COLUMN + MAX_POSITIONS - 1,
+    columns: ANCHOR_COLUMN,
     hidden: true,
     frozenRows: 4,
     columnWidths: {
@@ -598,6 +913,11 @@ function exposureLayout() {
       [letter(LINE_COLUMN + 1)]: 260,
       [`${letter(LINE_COLUMN + 2)}:${x.direct}`]: 90,
       [`${x.first}:${x.last}`]: 110,
+      [letter(CHART_COLUMN - 1)]: 24,
+      [letter(CHART_COLUMN)]: 220,
+      [span(CHART_COLUMN + 1, CHART_BLOCK_WIDTH - 1)]: 90,
+      [letter(ANCHOR_COLUMN - 1)]: 24,
+      [letter(ANCHOR_COLUMN)]: 110,
     },
     cells: [
       { range: "A1:A2", values: [["Status"], ["Last run"]] },
@@ -618,9 +938,16 @@ function exposureLayout() {
       { range: "A14:B14", values: [["runStart", "seconds"]] },
       { range: "A26:B26", values: [["equity", "value"]] },
       { range: "A27:A31", values: EQUITY_NAMES.map((name) => [name]) },
+      { range: header(ANCHOR_COLUMN, 1), values: [["chartRow"]] },
     ],
     styles: [
       { range: `A4:${x.last}4`, bold: true, background: "#f7f6f1" },
+      { range: header(CHART_COLUMN, CHART_BLOCK_WIDTH), bold: true, background: "#f7f6f1" },
+      {
+        range: `${letter(CHART_COLUMN + 1)}${FIRST_DATA_ROW}:${letter(chartLast)}${HEADER_ROW + CHART_ROWS}`,
+        numberFormat: "0.00%",
+      },
+      { range: header(ANCHOR_COLUMN, 1), bold: true, background: "#f7f6f1" },
       { range: "A14:B14", bold: true, background: "#f7f6f1" },
       { range: "A26:B26", bold: true, background: "#f7f6f1" },
       { range: "A15:A24", numberFormat: "yyyy-mm-dd hh:mm:ss" },
@@ -669,9 +996,10 @@ function exposureLayout() {
  * security measures carries the coverage label.
  *
  * The report spill starts in row REPORT_ROW, and its row count changes with
- * the Holdings tab. So the conditional formats find the titles, the headers,
- * the totals, and the notes of the spill by their text. The number formats
- * and the alignment of the columns apply from row REPORT_ROW to the last row.
+ * the Holdings tab. So the conditional formats find the titles, the chart
+ * header row, the headers, the totals, and the notes of the spill by their
+ * text. The number formats and the alignment of the columns apply from row
+ * REPORT_ROW to the last row.
  */
 function reportLayout(inputs = {}) {
   const threshold = inputs.threshold === undefined ? INPUTS.threshold.value : inputs.threshold;
@@ -690,7 +1018,7 @@ function reportLayout(inputs = {}) {
     columns: REPORT_COLUMNS,
     hidden: false,
     frozenRows: 2,
-    columnWidths: { A: 250, B: 300, C: 150, D: 175, E: 110, F: 180, [`G:${last}`]: 96 },
+    columnWidths: { ...REPORT_WIDTHS, [`G:${last}`]: 96 },
     cells: [
       { range: "A1:B1", values: [["Concentration", DISCLAIMER]] },
       { range: "B2", values: [["Your securities by company, with a look inside each fund."]] },
@@ -819,7 +1147,7 @@ function reportLayout(inputs = {}) {
       },
       {
         range: spill,
-        formula: `=OR($A${first}="${HOLDINGS_TITLE}",$B${first}="Fund overlap",$B${first}="${UNSEEN_TITLE}",$B${first}="${OTHER_TITLE}")`,
+        formula: `=OR($A${first}="${HOLDINGS_TITLE}",$A${first}=${chartHeading(`$B$${THRESHOLD_ROW}`)},$B${first}="Fund overlap",$B${first}="${UNSEEN_TITLE}",$B${first}="${OTHER_TITLE}")`,
         bold: true,
       },
       {
@@ -873,11 +1201,20 @@ function readInputs(report) {
       : report.getRange(1, 1, Math.min(INPUT_ROWS, report.getMaxRows()), 2).getValues();
   const inputs = {};
   for (const [name, input] of Object.entries(INPUTS)) {
-    const row = rows.find((cells) => cellText(cells[0]) === input.label);
-    const typed = row === undefined ? null : row[1];
+    const at = labelIndex(rows, input.label);
+    const typed = at < 0 ? null : rows[at][1];
     inputs[name] = isNumber(typed) && typed >= 0 && typed <= 1 ? typed : input.value;
   }
   return inputs;
+}
+
+/**
+ * The index of the first row whose cell in column A holds the label, or -1.
+ * `rows` holds the top rows of a report tab from column A. readInputs and
+ * onEdit find the cell of an input by its label with this function.
+ */
+function labelIndex(rows, label) {
+  return rows.findIndex((cells) => cellText(cells[0]) === label);
 }
 
 /**
@@ -893,9 +1230,17 @@ function readInputs(report) {
  * one.
  *
  * The function creates Concentration.Exposure first, because the formulas of
- * Concentration read it. It hides Concentration.Exposure last, because a
- * spreadsheet must keep one visible tab through each step. It changes no
- * other tab.
+ * Concentration read it. It hides Concentration.Exposure after it creates
+ * Concentration, because a spreadsheet must keep one visible tab through
+ * each step. It changes no other tab.
+ *
+ * The last step writes the chart block and the anchor cell of
+ * Concentration.Exposure, each time the function replaced a tab. Their
+ * formulas read Concentration. A formula that reads a tab which the same
+ * run deletes and creates again stays stale, so the function writes them
+ * after both tabs exist. When Concentration alone is absent, the formulas
+ * of the current hidden tab read a deleted tab, so the function writes them
+ * again.
  */
 function ensureTabs(book) {
   const hidden = book.getSheetByName(EXPOSURE_TAB);
@@ -903,9 +1248,28 @@ function ensureTabs(book) {
   const current = hidden !== null && hidden.getRange(VERSION_CELL).getValue() === LAYOUT_VERSION;
   if (current && report !== null) return;
   const inputs = readInputs(report);
-  const made = current ? null : replaceTab(book, hidden, exposureLayout());
+  const exposureTab = current ? hidden : replaceTab(book, hidden, exposureLayout());
   replaceTab(book, report, reportLayout(inputs));
-  if (made !== null) made.hideSheet();
+  if (!current) exposureTab.hideSheet();
+  writeChartBlock(exposureTab);
+}
+
+/**
+ * Write the formulas of the chart block and of the anchor cell into the tab
+ * Concentration.Exposure. The first call writes the block: the header row
+ * HEADER_ROW and the CHART_ROWS data rows under it, from the column
+ * CHART_COLUMN. The second call writes the anchor cell, in the row
+ * FIRST_DATA_ROW of the column ANCHOR_COLUMN. The formulas come from
+ * chartFormulas and anchorFormula and read the report tab, so ensureTabs
+ * calls this function after the report tab exists. The layout of the hidden
+ * tab holds the column widths, the formats, and the label of the anchor
+ * cell.
+ */
+function writeChartBlock(hidden) {
+  const chart = chartFormulas();
+  const rows = [chart.header, ...Array.from({ length: CHART_ROWS }, () => chart.row)];
+  hidden.getRange(HEADER_ROW, CHART_COLUMN, CHART_ROWS + 1, CHART_BLOCK_WIDTH).setValues(rows);
+  hidden.getRange(FIRST_DATA_ROW, ANCHOR_COLUMN).setValues([[anchorFormula()]]);
 }
 
 /**
