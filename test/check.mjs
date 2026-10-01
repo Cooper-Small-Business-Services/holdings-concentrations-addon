@@ -20,6 +20,13 @@
  * sources block must end at the column of position MAX_POSITIONS. Each
  * FILTER must sit in IFNA or IFERROR, or GUARDED_FILTERS must name it.
  *
+ * The script computes the direct weights, the unseen block, the stock fund
+ * block, the own block, and the group block from each answer. The harness
+ * computes the same values from the tab with the steps of the report
+ * formulas that computed them before, and compares the two. It also checks
+ * that the script writes the two data blocks alone, clears the cells of the
+ * last answer outside them, and fits the rows of the grid to the answer.
+ *
  * The last runs put tabs of another layout version into the spreadsheet
  * fake. They check that a refresh replaces those tabs and keeps the values
  * that the person typed.
@@ -201,15 +208,29 @@ const LINE_FIELDS = ["key", "name", "ticker", "lei", "class", "weight", "stockWe
 
 /**
  * The first column of each block of the Concentration.Exposure tab: the
- * funds in D, the overlaps in P, the mixes in U, the lines in AB, the part
- * name in AI, and the sources in AJ. Column 1 is A.
+ * funds in D, the overlaps in P, the mixes in U, the unseen block in AB, the
+ * stock fund block in AE, the own block in AG, the group block in AM, the
+ * lines in AR, the part name in AY, the direct weight in AZ, and the sources
+ * in BA. Column 1 is A.
  */
 const FUND_AT = 4;
 const OVERLAP_AT = 16;
 const MIX_AT = 21;
-const LINE_AT = 28;
+const UNSEEN_AT = 28;
+const STOCK_FUND_AT = 31;
+const OWN_AT = 33;
+const GROUP_AT = 39;
+const LINE_AT = 44;
 const PART_AT = LINE_AT + LINE_FIELDS.length;
-const SOURCE_AT = PART_AT + 1;
+const DIRECT_AT = PART_AT + 1;
+const SOURCE_AT = DIRECT_AT + 1;
+
+/**
+ * The count of position columns of the sources block, and the count of rows
+ * of a new tab.
+ */
+const MAX_POSITIONS = 200;
+const TAB_ROWS = 1000;
 
 /**
  * The first row of the equity block of the Concentration.Exposure tab.
@@ -399,6 +420,30 @@ class FakeSheet {
     return new FakeRange(this, b.row, b.column, b.rows, b.columns);
   }
 
+  /**
+   * The last row that holds a value, or 0 for an empty grid.
+   */
+  getLastRow() {
+    let last = 0;
+    this.grid.forEach((cells, r) => {
+      if (cells.some((value) => value !== "")) last = r + 1;
+    });
+    return last;
+  }
+
+  /**
+   * The last column that holds a value, or 0 for an empty grid.
+   */
+  getLastColumn() {
+    let last = 0;
+    for (const cells of this.grid) {
+      cells.forEach((value, c) => {
+        if (value !== "") last = Math.max(last, c + 1);
+      });
+    }
+    return last;
+  }
+
   getDataRange() {
     let lastRow = 1;
     let lastColumn = 1;
@@ -512,6 +557,14 @@ class FakeRange {
       });
     });
     this.record("setValues");
+    return this;
+  }
+
+  clearContent() {
+    for (let r = this.row; r < this.row + this.rows; r += 1) {
+      for (let c = this.column; c < this.column + this.columns; c += 1) this.sheet.grid[r - 1][c - 1] = "";
+    }
+    this.record("clearContent");
     return this;
   }
 
@@ -1419,6 +1472,209 @@ function expectedParts(lines, ids) {
 }
 
 /**
+ * The part rows of the lines block of a tab, in the form of expectedParts:
+ * the fields, the part name, and the source cells, with no direct weight.
+ * `count` is the count of position ids.
+ */
+function partRowsOf(sheet, rows, count) {
+  return sheet
+    .block(5, LINE_AT, rows, SOURCE_AT - LINE_AT + count)
+    .map((cells) => [...cells.slice(0, PART_AT - LINE_AT + 1), ...cells.slice(SOURCE_AT - LINE_AT)]);
+}
+
+/**
+ * The values that the report formulas of layout version 2 computed from the
+ * tab: the direct weight of each part row, the rows of their own, the
+ * groups, the weight of each position in the lines of the class unknown, and
+ * the funds that hold a stock. The function reads the lines block, the
+ * sources block with MAX_POSITIONS columns, the id row, the funds block, and
+ * the mix block, and it follows the steps of those formulas: dw, keep, came,
+ * cls, gw, gn, gf, uid, uu, fid, and f. The script writes these values into
+ * the tab, and the harness compares the two.
+ */
+function formulaReference(sheet) {
+  const all = sheet.getMaxRows() - 4;
+  const header = sheet.block(4, SOURCE_AT, 1, MAX_POSITIONS)[0];
+  const rows = sheet
+    .block(5, LINE_AT, all, SOURCE_AT - LINE_AT + MAX_POSITIONS)
+    .filter((cells) => cells[PART_AT - LINE_AT] !== "");
+  const field = (cells, name) => cells[LINE_FIELDS.indexOf(name)];
+  const part = (cells) => cells[PART_AT - LINE_AT];
+  const num = (value) => (typeof value === "number" ? value : 0);
+  const source = (cells, j) => cells[SOURCE_AT - LINE_AT + j];
+  const fundColumn = sheet.block(5, FUND_AT, all, 1).map((cells) => cells[0]);
+  const fid = [...new Set(fundColumn.filter((id) => id !== ""))];
+  const mixIds = new Set(sheet.block(5, MIX_AT, all, 1).map((cells) => cells[0]));
+  const isf = header.map((h) => (h !== "" && fid.includes(h) ? 1 : 0));
+  const pw = rows.map((cells) =>
+    part(cells) === "stock"
+      ? num(field(cells, "stockWeight"))
+      : part(cells) === "other"
+        ? num(field(cells, "weight")) - num(field(cells, "stockWeight"))
+        : 0,
+  );
+  const dw = rows.map((cells, r) => pw[r] - header.reduce((sum, _, j) => sum + num(source(cells, j)) * isf[j], 0));
+  const residual = (cells) => String(field(cells, "key")).startsWith("residual:");
+  const own = rows.map(
+    (cells, r) =>
+      part(cells) === "other" &&
+      field(cells, "class") !== "stock" &&
+      (residual(cells) || Math.abs(dw[r]) > 1e-12 || field(cells, "class") === "unknown"),
+  );
+  const grp = rows.map((cells, r) => part(cells) === "other" && !own[r]);
+  const came = (cells) => header.filter((h, j) => h !== "" && source(cells, j) !== "" && source(cells, j) !== 0);
+  const ownRows = rows
+    .map((cells, r) => [cells, r])
+    .filter(([cells, r]) => own[r] && !(residual(cells) && pw[r] === 0))
+    .map(([cells, r]) => [
+      field(cells, "key"),
+      field(cells, "name"),
+      field(cells, "class"),
+      pw[r],
+      came(cells).join(", "),
+    ]);
+  const cls = [...new Set(rows.filter((_, r) => grp[r]).map((cells) => field(cells, "class")))];
+  const groupRows = cls.map((kind) => {
+    const members = rows.map((cells, r) => [cells, r]).filter(([cells, r]) => grp[r] && field(cells, "class") === kind);
+    const ids = header.filter(
+      (h, j) => h !== "" && members.reduce((sum, [cells]) => sum + num(source(cells, j)), 0) !== 0,
+    );
+    return [kind, members.reduce((sum, [, r]) => sum + pw[r], 0), members.length, ids.join(", ")];
+  });
+  const unseenRows = header
+    .filter((h) => h !== "")
+    .map((h) => {
+      if (mixIds.has(h)) return [h, 0];
+      const j = header.indexOf(h);
+      const weight = rows
+        .filter((cells) => field(cells, "class") === "unknown" && part(cells) === "other")
+        .reduce((sum, cells) => sum + num(source(cells, j)), 0);
+      return [h, weight];
+    });
+  const stockFunds = fid
+    .filter((id) => {
+      const j = header.indexOf(id);
+      return (
+        j >= 0 &&
+        rows.filter((cells) => part(cells) === "stock").reduce((sum, cells) => sum + num(source(cells, j)), 0) !== 0
+      );
+    })
+    .map((id) => [id]);
+  return { direct: dw, own: ownRows, groups: groupRows, unseen: unseenRows, stockFunds };
+}
+
+/**
+ * The rows of a block of the tab from row 5 down to the last row whose first
+ * cell holds a value.
+ */
+function blockRows(sheet, column, width) {
+  const rows = sheet.block(5, column, sheet.getMaxRows() - 4, width);
+  let count = 0;
+  rows.forEach((cells, r) => {
+    if (cells[0] !== "") count = r + 1;
+  });
+  return rows.slice(0, count);
+}
+
+/**
+ * True when two rows of cells are equal: each text is the same, and each
+ * number is the same to 1e-12.
+ */
+function sameRows(a, b) {
+  return (
+    a.length === b.length &&
+    a.every(
+      (cells, r) =>
+        cells.length === b[r].length &&
+        cells.every((value, c) =>
+          typeof value === "number" && typeof b[r][c] === "number"
+            ? Math.abs(value - b[r][c]) < 1e-12
+            : value === b[r][c],
+        ),
+    )
+  );
+}
+
+/**
+ * Check that the computed blocks and the direct weights of the tab hold the
+ * values of formulaReference.
+ */
+function checkComputed(sheet, name, partCount) {
+  const want = formulaReference(sheet);
+  const direct = sheet.block(5, DIRECT_AT, partCount, 1).map((cells) => cells[0]);
+  check(
+    direct.length === want.direct.length && direct.every((v, r) => Math.abs(v - want.direct[r]) < 1e-12),
+    `${name}: column AZ holds the direct weight dw of each of the ${partCount} part rows`,
+  );
+  check(
+    sameRows(blockRows(sheet, OWN_AT, 5), want.own),
+    `${name}: the own block AG:AK holds the ${want.own.length} rows of their own, with keep and came of the formula`,
+  );
+  check(
+    sameRows(blockRows(sheet, GROUP_AT, 4), want.groups),
+    `${name}: the group block AM:AP holds cls, gw, gn, and gf of the formula (${want.groups.length} classes)`,
+  );
+  check(
+    sameRows(blockRows(sheet, UNSEEN_AT, 2), want.unseen),
+    `${name}: the unseen block AB:AC holds uid and uu of the formula (${want.unseen.length} positions)`,
+  );
+  check(
+    sameRows(blockRows(sheet, STOCK_FUND_AT, 1), want.stockFunds),
+    `${name}: the stock fund block AE holds f of the formula (${want.stockFunds.length} funds)`,
+  );
+  return want;
+}
+
+/**
+ * The last row of the blocks left of the lines block: the equity block, or
+ * the last row of the longest of the funds, the overlaps, the mixes, and the
+ * blocks that the script computes.
+ */
+function topLastOf(sheet, computed) {
+  return Math.max(
+    31,
+    ...[FUND_AT, OVERLAP_AT, MIX_AT].map((column) => 4 + blockRows(sheet, column, 1).length),
+    ...[computed.unseen, computed.stockFunds, computed.own, computed.groups].map((rows) => 4 + rows.length),
+  );
+}
+
+/**
+ * Check the two data writes of a good run in the log entries after the
+ * request: the blocks left of the lines block from B4 to AQ down to
+ * `topLast`, then the lines block from AR4 down to the last part row and to
+ * the column of the last position. No setValues call reaches a column after
+ * the last position. The function prints the count of cells of the two
+ * writes and the count of a write of the whole grid, and gives the first.
+ */
+function checkDataWrites(entries, name, topLast, partCount, idCount, sheet) {
+  const writes = entries.filter((e) => e.op === "setValues");
+  const [top, lines] = writes;
+  check(
+    top.row === 4 && top.column === 2 && top.rows === topLast - 3 && top.columns === LINE_AT - 2,
+    `${name}: the first data write covers B4:AQ${topLast}, the blocks left of the lines block ` +
+      `(${top.row},${top.column},${top.rows},${top.columns})`,
+  );
+  const lastColumn = SOURCE_AT - 1 + idCount;
+  check(
+    lines.row === 4 &&
+      lines.column === LINE_AT &&
+      lines.rows === partCount + 1 &&
+      lines.columns === lastColumn - LINE_AT + 1,
+    `${name}: the second data write covers row 4 to the last part row, from AR to the column of position ${idCount} ` +
+      `(${lines.row},${lines.column},${lines.rows},${lines.columns})`,
+  );
+  check(
+    writes.every((e) => e.column + e.columns - 1 <= lastColumn),
+    `${name}: no setValues call reaches a column after the column of the last position`,
+  );
+  const written = top.rows * top.columns + lines.rows * lines.columns;
+  const grid = (sheet.getMaxRows() - 3) * (sheet.getMaxColumns() - 1);
+  check(written < grid, `${name}: the two writes hold fewer cells than a write of the whole grid`);
+  console.log(`  ${name}: the data writes hold ${written} cells; a write of the whole grid holds ${grid}.`);
+  return written;
+}
+
+/**
  * The sum of the numbers of a list of cells. A cell with no number adds 0.
  */
 function sumCells(cells) {
@@ -1476,15 +1732,11 @@ const GUARDED_FILTERS = {
   },
   keep: {
     guards: ["main,IF(nown=0,FILTER(grpAll,big),", "nis,IF(nown+ng=0,"],
-    reason: "main uses ownRows only when nown, the count of the rows of their own, is above 0",
+    reason: "main uses ownRows only when nown, the count of the rows of the own block, is above 0",
   },
   grp: {
     guards: ["ng,IF(SUM(grp)=0,0,SUM(big)),", "nsm,IF(SUM(grp)=0,0,SUM(sm)),"],
-    reason: "ng and nsm are 0 when no line is in a group, so no group row is used",
-  },
-  "grp,LC=x": {
-    guards: ["cls,UNIQUE(FILTER(LC,grp)),"],
-    reason: "each class x comes from the lines of grp, so a line always matches",
+    reason: "ng and nsm are 0 when the group block is empty, so no group row is used",
   },
   big: {
     guards: ["ng,IF(SUM(grp)=0,0,SUM(big)),", "main,IF(nown=0,FILTER(grpAll,big),IF(ng=0,", "nis,IF(nown+ng=0,"],
@@ -1773,9 +2025,109 @@ function main() {
     "columnLetter is the inverse of columnNumber",
   );
   const small = new FakeSheet("small", 2, 2, []);
-  context.growGrid(small, 3, 5);
-  context.growGrid(small, 1, 1);
-  check(small.getMaxRows() === 3 && small.getMaxColumns() === 5, "growGrid adds rows and columns and never shrinks");
+  context.fitGrid(small, 3, 5);
+  check(
+    small.getMaxRows() === TAB_ROWS && small.getMaxColumns() === 5,
+    `fitGrid adds rows up to ${TAB_ROWS} at least, and adds columns`,
+  );
+  context.fitGrid(small, TAB_ROWS + 50, 1);
+  check(
+    small.getMaxRows() === TAB_ROWS + 50 && small.getMaxColumns() === 5,
+    "fitGrid adds rows for a longer answer and deletes no column",
+  );
+  context.fitGrid(small, 10, 1);
+  check(small.getMaxRows() === TAB_ROWS, `fitGrid deletes the rows after ${TAB_ROWS} for a shorter answer`);
+
+  console.log("\n== Values that the script computes from an answer");
+  const computeIds = ["F", "S", "P", "M"];
+  const computeFunds = [{ id: "F" }, { id: "M" }, { id: "F" }];
+  const lineOf = (key, kind, weight, sources, stockWeight = 0, stockSources = {}) => ({
+    key,
+    name: `Name of ${key}`,
+    ticker: null,
+    lei: null,
+    class: kind,
+    weight,
+    sources,
+    stockWeight,
+    stockSources,
+  });
+  const computeLines = [
+    lineOf("lei:X", "stock", 0.4, { F: 0.25, S: 0.15 }, 0.4, { F: 0.25, S: 0.15 }),
+    lineOf("name:BOND", "other", 0.1, { F: 0.06, S: 0.04 }),
+    lineOf("name:CASH", "cash", 0.05, { F: 0.03, M: 0.02 }),
+    lineOf("name:TBILL", "treasury", 0.02, { M: 0.02 }),
+    lineOf("name:CASH2", "cash", 0.01, { F: 0.01 }),
+    lineOf("id:P", "unknown", 0.3, { P: 0.3 }),
+    lineOf("residual:F", "other", 0, { F: 0 }),
+    lineOf("residual:M", "other", 0.01, { M: 0.01 }),
+    lineOf("id:M", "unknown", 0.11, { M: 0.11 }),
+    lineOf("name:Q", "unknown", 0.02, { F: 0.02 }),
+    lineOf("lei:Y", "stock", 0.03, { F: 0.03 }, 0.02, { F: 0.02 }),
+  ];
+  const computeParts = context.partRows(computeLines, computeIds);
+  const computeDirect = context.directWeights(computeParts, computeIds, computeFunds);
+  const wantDirect = [0.15, 0.04, 0, 0, 0, 0.3, 0, 0, 0, 0, 0, 0];
+  check(
+    computeDirect.length === wantDirect.length && computeDirect.every((v, r) => Math.abs(v - wantDirect[r]) < 1e-12),
+    `directWeights gives the part weight minus the cells of the funds F and M (${JSON.stringify(computeDirect)})`,
+  );
+  const computeOwn = context.ownRows(computeParts, computeIds, computeDirect);
+  check(
+    sameRows(computeOwn, [
+      ["name:BOND", "Name of name:BOND", "other", 0.1, "F, S"],
+      ["id:P", "Name of id:P", "unknown", 0.3, "P"],
+      ["residual:M", "Name of residual:M", "other", 0.01, "M"],
+      ["id:M", "Name of id:M", "unknown", 0.11, "M"],
+      ["name:Q", "Name of name:Q", "unknown", 0.02, "F"],
+    ]),
+    "ownRows gives a direct line, each line of the class unknown, and a residual line above 0, in their order " +
+      `(${JSON.stringify(computeOwn)})`,
+  );
+  const computeGroups = context.groupRows(computeParts, computeIds, computeDirect);
+  check(
+    sameRows(computeGroups, [
+      ["cash", 0.05 + 0.01, 2, "F, M"],
+      ["treasury", 0.02, 1, "M"],
+      ["stock", 0.03 - 0.02, 1, "F"],
+    ]),
+    "groupRows gives each class of the other rows with no row of their own, with the weight, the count, " +
+      `and the positions, and skips a residual line of 0 (${JSON.stringify(computeGroups)})`,
+  );
+  const computeMixes = [["M", 0.2, 46000, "VOO", 1, false]];
+  const computeUnseen = context.unseenRows(computeParts, computeIds, computeMixes);
+  check(
+    sameRows(computeUnseen, [
+      ["F", 0.02],
+      ["S", 0],
+      ["P", 0.3],
+      ["M", 0],
+    ]),
+    `unseenRows gives each position its weight in the lines of the class unknown, and 0 with a mix (${JSON.stringify(computeUnseen)})`,
+  );
+  const computeStock = context.stockFundRows(computeParts, computeIds, computeFunds);
+  check(
+    JSON.stringify(computeStock) === JSON.stringify([["F"]]),
+    `stockFundRows gives each fund one time, and no fund whose stock cells add up to 0 (${JSON.stringify(computeStock)})`,
+  );
+  const computeSheet = new FakeSheet(EXPOSURE_TAB, 40, SOURCE_AT + MAX_POSITIONS - 1, []);
+  computeSheet.grid[3].splice(SOURCE_AT - 1, computeIds.length, ...computeIds);
+  computeFunds.forEach((fund, r) => {
+    computeSheet.grid[4 + r][FUND_AT - 1] = fund.id;
+  });
+  computeSheet.grid[4][MIX_AT - 1] = "M";
+  computeParts.forEach((cells, r) => {
+    const row = [...cells.slice(0, LINE_FIELDS.length + 1), computeDirect[r], ...cells.slice(LINE_FIELDS.length + 1)];
+    computeSheet.grid[4 + r].splice(LINE_AT - 1, row.length, ...row);
+  });
+  const placeRows = (column, rows) => {
+    rows.forEach((cells, r) => computeSheet.grid[4 + r].splice(column - 1, cells.length, ...cells));
+  };
+  placeRows(OWN_AT, computeOwn);
+  placeRows(GROUP_AT, computeGroups);
+  placeRows(UNSEEN_AT, computeUnseen);
+  placeRows(STOCK_FUND_AT, computeStock);
+  checkComputed(computeSheet, "the hand answer", computeParts.length);
 
   const handLines = [
     {
@@ -1973,15 +2325,46 @@ function main() {
   const firstSource = vm.runInContext("SOURCE_COLUMN", context);
   check(firstSource === SOURCE_AT, `the sources block starts at column ${SOURCE_AT}`);
   const exposureRange = /'Concentration\.Exposure'!\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d*)/g;
-  for (const cell of [NOTE_CELL, HEADER_CELL, SPILL_CELL]) {
-    const sourceRanges = [...report.cell(cell).matchAll(exposureRange)].filter(
-      (m) => columnNumber(m[1]) === firstSource,
-    );
-    check(sourceRanges.length === 2, `${cell} reads the sources block and the id row (${sourceRanges.length} ranges)`);
+  /**
+   * The ranges of a formula that start in the first column of the sources
+   * block.
+   */
+  const sourceRangesOf = (cell) =>
+    [...report.cell(cell).matchAll(exposureRange)].filter((m) => columnNumber(m[1]) === firstSource);
+  for (const cell of [NOTE_CELL, HEADER_CELL]) {
     check(
-      sourceRanges.every((m) => columnNumber(m[3]) === lastSource),
-      `the source ranges of ${cell} end at column ${lastSource}, the column of position MAX_POSITIONS ` +
-        `(${sourceRanges.map((m) => m[0]).join(", ")})`,
+      sourceRangesOf(cell).length === 0,
+      `${cell} reads a block that the script computes, and no range of the sources block`,
+    );
+  }
+  const spillRanges = sourceRangesOf(SPILL_CELL);
+  check(
+    spillRanges.length === 2,
+    `${SPILL_CELL} reads the sources block and the id row (${spillRanges.length} ranges)`,
+  );
+  check(
+    spillRanges.every((m) => columnNumber(m[3]) === lastSource),
+    `the source ranges of ${SPILL_CELL} end at column ${lastSource}, the column of position MAX_POSITIONS ` +
+      `(${spillRanges.map((m) => m[0]).join(", ")})`,
+  );
+  check(
+    [NOTE_CELL, HEADER_CELL, SPILL_CELL].every(
+      (cell) => !/\b(MMULT|BYROW)\(|\bnum,|\bisf,|\bfid,/.test(report.cell(cell)),
+    ),
+    `${NOTE_CELL}, ${HEADER_CELL}, and ${SPILL_CELL} hold no MMULT, no BYROW, and no num, isf, or fid`,
+  );
+  for (const text of [
+    "thr,$B$22,",
+    'sel,ARRAYFORMULA((LP="stock")*ISNUMBER(LX)*(LX>=thr)),',
+    'rsel,ARRAYFORMULA((LP="stock")*ISNUMBER(LX)*(LX<thr)),',
+    'rf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,"stock",LX,"<"&thr),0))),',
+    "psel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$23)),",
+    "IF(ABS(gw*tot)>=100,1,0)",
+  ]) {
+    check(
+      report.cell(SPILL_CELL).includes(text),
+      `${SPILL_CELL} computes ${text.slice(0, 40)} in the formula, so a change of the threshold, the overlap ` +
+        "minimum, or the Holdings tab shows with no refresh",
     );
   }
   const exposureState = JSON.parse(created[EXPOSURE_TAB]);
@@ -2154,7 +2537,7 @@ function main() {
    */
   const partFaults = (sheet) => {
     let faults = 0;
-    const now = sheet.block(5, LINE_AT, parts.length, partWidth);
+    const now = partRowsOf(sheet, parts.length, ids.length);
     parts.forEach((cells, r) => {
       cells.forEach((value, c) => {
         if (now[r]?.[c] !== value) faults += 1;
@@ -2164,21 +2547,21 @@ function main() {
   };
   check(
     partFaults(x) === 0,
-    `AB5:AI and the sources from AJ5 hold the ${parts.length} part rows of the ${lines.length} lines, in the answer order`,
+    `AR5:AY and the sources from BA5 hold the ${parts.length} part rows of the ${lines.length} lines, in the answer order`,
   );
   check(
     x
-      .block(5 + parts.length, LINE_AT, x.getMaxRows() - 4 - parts.length, partWidth)
+      .block(5 + parts.length, LINE_AT, x.getMaxRows() - 4 - parts.length, partWidth + 1)
       .every((c) => c.every((v) => v === "")),
     "the rows under the last part row are empty",
   );
-  const partCells = x.block(5, LINE_AT, parts.length, partWidth);
+  const partCells = partRowsOf(x, parts.length, ids.length);
   const stockIndex = LINE_FIELDS.indexOf("stockWeight");
   const weightIndex = LINE_FIELDS.indexOf("weight");
   const partIndex = LINE_FIELDS.length;
   const stockRows = partCells.filter((cells) => cells[partIndex] === "stock");
   const otherRows = partCells.filter((cells) => cells[partIndex] === "other");
-  check(stockRows.length + otherRows.length === partCells.length, "column AI of each row holds stock or other");
+  check(stockRows.length + otherRows.length === partCells.length, "column AY of each row holds stock or other");
   check(
     stockRows.every((cells) => Math.abs(sumCells(cells.slice(partIndex + 1)) - cells[stockIndex]) < 1e-9),
     "the source cells of each stock row add up to the stock weight of its line",
@@ -2219,8 +2602,8 @@ function main() {
     "the script asks for the Holdings tab and the two report tabs alone",
   );
   check(
-    writesSince(fetchAt) === 3,
-    "after the request, run 1 makes 1 setValues call for the data, 1 for the status, and 1 for the run time " +
+    writesSince(fetchAt) === 4,
+    "after the request, run 1 makes 2 setValues calls for the data, 1 for the status, and 1 for the run time " +
       `(${writesSince(fetchAt)})`,
   );
   const writeRanges = afterFetch
@@ -2229,21 +2612,15 @@ function main() {
   const flushAt = afterFetch.findIndex((e) => e.op === "flush");
   const setAt = afterFetch.map((e, n) => (e.op === "setValues" ? n : -1)).filter((n) => n >= 0);
   check(
-    writeRanges[1] === "1,2,2,1" && writeRanges[2] === "15,1,10,2",
-    `the status write B1:B2 comes before the run-time write A15:B24 (${writeRanges.slice(1).join("; ")})`,
+    writeRanges[2] === "1,2,2,1" && writeRanges[3] === "15,1,10,2",
+    `the status write B1:B2 comes before the run-time write A15:B24 (${writeRanges.slice(2).join("; ")})`,
   );
   check(
-    flushAt > setAt[1] && flushAt < setAt[2] && afterFetch.filter((e) => e.op === "flush").length === 1,
+    flushAt > setAt[2] && flushAt < setAt[3] && afterFetch.filter((e) => e.op === "flush").length === 1,
     "run 1 calls SpreadsheetApp.flush once, after the status write and before the run-time write",
   );
-  const dataWrite = afterFetch.find((e) => e.op === "setValues");
-  check(
-    dataWrite.row === 4 &&
-      dataWrite.column === 2 &&
-      dataWrite.rows === x.getMaxRows() - 3 &&
-      dataWrite.columns === x.getMaxColumns() - 1,
-    "the data write follows the request and covers B4 to the last column and the last row of the grid",
-  );
+  const runOneComputed = checkComputed(x, "run 1", parts.length);
+  checkDataWrites(afterFetch, "run 1", topLastOf(x, runOneComputed), parts.length, ids.length, x);
   const textRanges = afterFetch
     .filter((e) => e.op === "setNumberFormat" && e.value === "@")
     .map((e) => `${e.row},${e.column},${e.columns}`);
@@ -2254,10 +2631,16 @@ function main() {
       `5,${OVERLAP_AT},2`,
       `5,${MIX_AT},1`,
       `5,${MIX_AT + 3},1`,
+      `5,${UNSEEN_AT},1`,
+      `5,${STOCK_FUND_AT},1`,
+      `5,${OWN_AT},3`,
+      `5,${OWN_AT + 4},1`,
+      `5,${GROUP_AT},1`,
+      `5,${GROUP_AT + 3},1`,
       `5,${LINE_AT},4`,
       `4,${SOURCE_AT},${x.getMaxColumns() - SOURCE_AT + 1}`,
     ].every((r) => textRanges.includes(r)),
-    "the script sets the text format on D:E, G, P:Q, U, X, AB:AE, and row 4 from AJ",
+    "the script sets the text format on D:E, G, P:Q, U, X, AB, AE, AG:AI, AK, AM, AP, AR:AU, and row 4 from BA",
   );
   const firstFormat = afterFetch.findIndex((e) => e.op === "setNumberFormat");
   const firstWrite = afterFetch.findIndex((e) => e.op === "setValues");
@@ -2286,7 +2669,7 @@ function main() {
   table(FUND_FIELDS, fundCells);
   console.log("\nOverlaps block, P5:S:");
   table(["firstId", "secondId", "overlap", "sharedLineCount"], x.block(5, OVERLAP_AT, pairs.length, 4));
-  console.log("\nFirst 10 part rows, AB5:AI and the sources from AJ5:");
+  console.log("\nFirst 10 part rows, AR5:AY and the sources from BA5:");
   table(partHeader, partCells.slice(0, 10));
   console.log("\nPart rows of the lines of the direct positions:");
   const directKeys = new Set(
@@ -2355,7 +2738,55 @@ function main() {
     x.block(5, OVERLAP_AT, x.getMaxRows() - 4, 4).every((c) => c.every((v) => v === "")),
     "P5:S is empty when the answer holds no pair",
   );
+  const runTwoAfter = state.log.slice(indexSince(logFrom, (e) => e.op === "fetch") + 1);
+  const runTwoComputed = checkComputed(x, "run 2", bigLines);
+  checkDataWrites(runTwoAfter, "run 2", topLastOf(x, runTwoComputed), bigLines, fortyIds.length, x);
   console.log(`  B1: ${x.cell("B1")}; grid ${x.getMaxRows()} rows, ${x.getMaxColumns()} columns`);
+
+  const shorterLines = bigLines - 100;
+  const thirty = fortyIds.slice(0, 30);
+  console.log(`\n== Run 2b: status 200 with 30 positions and ${shorterLines} lines, so the answer is shorter`);
+  replaceHoldings(forty.slice(0, 30));
+  logFrom = state.log.length;
+  state.fetchHandler = () => fakeResponse(200, JSON.stringify(bigAnswer(thirty, shorterLines)));
+  pause(2);
+  const runTwoB = timedRun();
+  checkRecorded("run 2b", runTwoB);
+  checkNoTabChange(reportState, logFrom, "run 2b");
+  check(
+    x.getMaxRows() === 4 + shorterLines && x.getMaxColumns() === exposureColumns,
+    `the grid shrinks to the ${4 + shorterLines} rows of the answer and keeps ${exposureColumns} columns ` +
+      `(${x.getMaxRows()} by ${x.getMaxColumns()})`,
+  );
+  const runTwoBEntries = state.log.slice(logFrom);
+  check(
+    runTwoBEntries.some((e) => e.op === "deleteRows" && e.count === bigLines - shorterLines),
+    `run 2b deletes the ${bigLines - shorterLines} rows after the answer at the end of the grid`,
+  );
+  const clears = runTwoBEntries.filter((e) => e.op === "clearContent");
+  check(
+    clears.length > 0 && clears.every((e) => e.column >= 2),
+    "run 2b clears the cells of run 2 that the new answer does not write, and no cell of column A",
+  );
+  check(
+    clears.some((e) => e.column === SOURCE_AT + 30 && e.row === 4),
+    "run 2b clears the source columns of positions 31 to 40 from row 4",
+  );
+  check(
+    x
+      .block(4, SOURCE_AT + 30, x.getMaxRows() - 3, x.getMaxColumns() - SOURCE_AT - 29)
+      .every((c) => c.every((v) => v === "")),
+    "no id and no cell of positions 31 to 40 of run 2 stays",
+  );
+  const runTwoBComputed = checkComputed(x, "run 2b", shorterLines);
+  checkDataWrites(
+    state.log.slice(indexSince(logFrom, (e) => e.op === "fetch") + 1),
+    "run 2b",
+    topLastOf(x, runTwoBComputed),
+    shorterLines,
+    thirty.length,
+    x,
+  );
 
   console.log("\n== Run 3: status 200 with the answer of run 1 again, and tabs of the current layout version");
   replaceHoldings(HOLDINGS_ROWS);
@@ -2366,7 +2797,10 @@ function main() {
   checkNoTabChange(reportState, logFrom, "run 3");
   check(x.cell(VERSION_CELL) === layoutVersion, `${VERSION_CELL} holds the current layout version, so both tabs stay`);
   checkRecorded("run 3", runThree);
-  check(x.getMaxRows() === bigRows && x.getMaxColumns() === exposureColumns, "the grid does not shrink");
+  check(
+    x.getMaxRows() === TAB_ROWS && x.getMaxColumns() === exposureColumns,
+    `the grid shrinks to ${TAB_ROWS} rows, the rows of a new tab, and keeps ${exposureColumns} columns`,
+  );
   check(partFaults(x) === 0, "the part rows of run 1 are back");
   check(pairFaults(x) === 0, "the pairs of run 1 are back");
   check(
@@ -2499,11 +2933,11 @@ function main() {
   checkNoTabChange(reportState, logFrom, "run 8");
   console.log(`  B1: ${x.cell("B1")}`);
 
-  console.log("\n== Run 9: eight good runs, so eleven good runs in all");
+  console.log("\n== Run 9: seven good runs, so eleven good runs in all");
   replaceHoldings(HOLDINGS_ROWS);
   state.fetchHandler = () => fakeResponse(200, liveText);
   const firstStart = runStarts.at(-1);
-  for (let n = 4; n <= 11; n += 1) {
+  for (let n = 5; n <= 11; n += 1) {
     pause(2);
     const times = timedRun();
     check(x.cell("B1") === "OK", `good run ${n}: B1 is OK`);
@@ -2932,10 +3366,16 @@ function main() {
     `U5:Z holds one row for each fund of the mix, with the entry date and the substitute flag (${JSON.stringify(mixCells.slice(0, 3))})`,
   );
   const mixParts = expectedParts(mixAnswer.lines, mixIds);
-  const mixPartCells = x.block(5, LINE_AT, mixParts.length, LINE_FIELDS.length + 1 + mixIds.length);
+  const mixPartCells = partRowsOf(x, mixParts.length, mixIds.length);
   check(
     JSON.stringify(mixPartCells) === JSON.stringify(mixParts),
     "the part rows hold the lines of the answer with parts",
+  );
+  const mixComputed = checkComputed(x, "run 15", mixParts.length);
+  check(
+    mixComputed.unseen.find(([id]) => id === PLAN_FUND)?.[1] === 0 &&
+      blockRows(x, UNSEEN_AT, 2).find(([id]) => id === PLAN_FUND)?.[1] === 0,
+    "the unseen block gives 0 to the holding with a mix",
   );
   const coverage = calculate(report.cell(COVERAGE_CELL), x);
   const wantCoverage = LIVE_PARTS

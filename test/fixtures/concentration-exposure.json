@@ -1,6 +1,6 @@
 {
   "tab": "Concentration.Exposure",
-  "note": "The answer of the concentration route. B3 holds the layout version. The script writes B1, B2, B5:B13, B27:B31, D5:N, P5:S, the mix block U5:Z, the rows of the lines from AB5, and one source column for each position from column AJ, with the position id in row 4. A line gives one row for its stock part, one row for its other part, or both, and column AI names the part. The mix block holds one row for each fund of each mix that the request sent. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. This file writes the layout version, the labels, and the format alone. The tab holds no formula and no dollar value.",
+  "note": "The answer of the concentration route and the values that the script computes from it. B3 holds the layout version. The script writes B1, B2, B5:B13, B27:B31, D5:N, P5:S, and the mix block U5:Z. It writes the unseen block AB5:AC, one row for each position with the weight of the lines of the class unknown that came through it. It writes the stock fund block AE5:AE, the own block AG5:AK of the rows that the report shows on a row of their own, and the group block AM5:AP of the other rows of the other part, one row for each class. It writes the rows of the lines from AR5, the direct weight of each row in column AZ, and one source column for each position from column BA, with the position id in row 4. A line gives one row for its stock part, one row for its other part, or both, and column AY names the part. The mix block holds one row for each fund of each mix that the request sent. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. This file writes the layout version, the labels, and the format alone. The tab holds no formula and no dollar value.",
   "cells": [
     {
       "range": "A1:A2",
@@ -8,7 +8,7 @@
     },
     {
       "range": "A3:B3",
-      "values": [["layoutVersion", 2]]
+      "values": [["layoutVersion", 3]]
     },
     {
       "range": "A4:A13",
@@ -56,8 +56,24 @@
       "values": [["mixId", "mixWeight", "entered", "partTicker", "partWeight", "substitute"]]
     },
     {
-      "range": "AB4:AI4",
-      "values": [["key", "name", "ticker", "lei", "class", "weight", "stockWeight", "part"]]
+      "range": "AB4:AC4",
+      "values": [["unseenId", "unseenWeight"]]
+    },
+    {
+      "range": "AE4:AE4",
+      "values": [["stockFundId"]]
+    },
+    {
+      "range": "AG4:AK4",
+      "values": [["ownKey", "ownName", "ownClass", "ownWeight", "ownSources"]]
+    },
+    {
+      "range": "AM4:AP4",
+      "values": [["groupClass", "groupWeight", "groupCount", "groupSources"]]
+    },
+    {
+      "range": "AR4:AZ4",
+      "values": [["key", "name", "ticker", "lei", "class", "weight", "stockWeight", "part", "directWeight"]]
     },
     {
       "range": "A14:B14",
@@ -74,7 +90,7 @@
   ],
   "format": {
     "hidden": true,
-    "columns": 235,
+    "columns": 252,
     "frozenRows": 4,
     "columnWidths": {
       "A": 170,
@@ -86,14 +102,22 @@
       "T": 24,
       "U:Z": 110,
       "AA": 24,
-      "AB": 220,
-      "AC": 260,
-      "AD:AI": 90,
-      "AJ:IA": 110
+      "AB:AC": 110,
+      "AD": 24,
+      "AE": 110,
+      "AF": 24,
+      "AG:AK": 110,
+      "AL": 24,
+      "AM:AP": 110,
+      "AQ": 24,
+      "AR": 220,
+      "AS": 260,
+      "AT:AZ": 90,
+      "BA:IR": 110
     },
     "cells": [
       {
-        "range": "A4:IA4",
+        "range": "A4:IR4",
         "bold": true,
         "background": "#f7f6f1"
       },
@@ -200,11 +224,31 @@
         "numberFormat": "0.00000"
       },
       {
-        "range": "AG5:AH",
+        "range": "AC5:AC",
         "numberFormat": "0.00000"
       },
       {
-        "range": "AJ5:IA",
+        "range": "AJ5:AJ",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "AN5:AN",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "AO5:AO",
+        "numberFormat": "#,##0"
+      },
+      {
+        "range": "AW5:AX",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "AZ5:AZ",
+        "numberFormat": "0.00000"
+      },
+      {
+        "range": "BA5:IR",
         "numberFormat": "0.00000"
       }
     ]

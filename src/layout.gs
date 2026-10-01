@@ -4,8 +4,12 @@
  *
  * The tab Concentration.Exposure is hidden. It holds the layout version, the
  * answer of the concentration route, the fund mixes that the request sent,
- * and the run times of the 10 newest good refreshes. concentration.gs writes
- * the answer, the mixes, and the run times. The tab
+ * the values that the script computes from the answer, and the run times of
+ * the 10 newest good refreshes. concentration.gs writes the answer, the
+ * mixes, the computed values, and the run times. No computed value reads
+ * the threshold, the overlap minimum, or the total value of the Holdings
+ * tab. The report formulas read those cells, so a change of one of them
+ * shows in the report with no refresh. The tab
  * Concentration is the report. Each of its cells is a label, a formula, or
  * one of the two cells that the person types in: the threshold and the
  * overlap minimum. The formulas read Concentration.Exposure and the Holdings
@@ -29,7 +33,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads. The next refresh then replaces the two
  * tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 2;
+const LAYOUT_VERSION = 3;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -140,6 +144,7 @@ function equityCell(name) {
 /**
  * The column letters of the blocks of the tab Concentration.Exposure that the
  * report formulas read: the funds block, the overlaps block, the mix block,
+ * the unseen block, the stock fund block, the own block, the group block,
  * the lines block, and the sources block. The sources block ends at the
  * column of position MAX_POSITIONS, because a request holds MAX_POSITIONS
  * positions at most.
@@ -147,6 +152,8 @@ function equityCell(name) {
 function exposureColumns() {
   const fund = (name) => columnLetter(FUND_COLUMN + FUND_FIELDS.indexOf(name));
   const mix = (name) => columnLetter(MIX_COLUMN + MIX_FIELDS.indexOf(name));
+  const own = (name) => columnLetter(OWN_COLUMN + OWN_FIELDS.indexOf(name));
+  const group = (name) => columnLetter(GROUP_COLUMN + GROUP_FIELDS.indexOf(name));
   const line = (name) => columnLetter(LINE_COLUMN + LINE_FIELDS.indexOf(name));
   return {
     fundId: fund("id"),
@@ -162,6 +169,18 @@ function exposureColumns() {
     mixTicker: mix("partTicker"),
     mixPart: mix("partWeight"),
     mixSubstitute: mix("substitute"),
+    unseenId: columnLetter(UNSEEN_COLUMN),
+    unseenWeight: columnLetter(UNSEEN_COLUMN + 1),
+    stockFund: columnLetter(STOCK_FUND_COLUMN),
+    ownKey: own("ownKey"),
+    ownName: own("ownName"),
+    ownClass: own("ownClass"),
+    ownWeight: own("ownWeight"),
+    ownSources: own("ownSources"),
+    groupClass: group("groupClass"),
+    groupWeight: group("groupWeight"),
+    groupCount: group("groupCount"),
+    groupSources: group("groupSources"),
     key: line("key"),
     name: line("name"),
     ticker: line("ticker"),
@@ -169,6 +188,7 @@ function exposureColumns() {
     weight: line("weight"),
     stock: line("stockWeight"),
     part: columnLetter(PART_COLUMN),
+    direct: columnLetter(DIRECT_COLUMN),
     first: columnLetter(SOURCE_COLUMN),
     last: columnLetter(SOURCE_COLUMN + MAX_POSITIONS - 1),
   };
@@ -242,31 +262,29 @@ function noStockFormula() {
 
 /**
  * The names at the start of the LET of a formula that reads the holdings
- * that the route cannot look through. The caller defines LC, LP, LS, LH, and
- * MI first: the class column, the part column, the sources block, the id
- * row, and the id column of the mix block.
- *
- * uid holds each position id of the last answer, as a column. uu holds the
- * weight of the lines of the class unknown that came through each position
- * with no mix. A position with a mix gets 0, and so does an empty id.
+ * that the route cannot look through. uid holds each position id of the last
+ * answer, as a column, and uu holds the weight of each position in the
+ * unseen block. The script writes the unseen block: the weight of the lines
+ * of the class unknown that came through each position with no mix, and 0
+ * for a position with a mix.
  */
 function unseenNames() {
-  return `uid,TRANSPOSE(IFNA(FILTER(LH,LH<>""),"")),
-uu,MAP(uid,LAMBDA(h,IF(OR(h="",ISNUMBER(XMATCH(h,MI))),0,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(h,LH)),LC,"unknown",LP,"${OTHER_PART}"),0)))),`;
+  const x = exposureColumns();
+  const id = exposureColumn(x.unseenId);
+  return `uid,IFNA(FILTER(${id},${id}<>""),""),
+uu,IFNA(FILTER(${exposureColumn(x.unseenWeight)},${id}<>""),0),`;
 }
 
 /**
  * The formula of B3, under the status cell: the count of the holdings that
  * the route cannot look through and that have no mix, with their share of
- * the portfolio. The cell is empty when no such holding exists.
+ * the portfolio. The formula reads the weights of the unseen block. The cell
+ * is empty when no such holding exists.
  */
 function unseenNoteFormula() {
   const x = exposureColumns();
-  return `=LET(LC,${exposureColumn(x.class)},LP,${exposureColumn(x.part)},
-LS,${exposure(`$${x.first}$${FIRST_DATA_ROW}:$${x.last}`)},LH,${exposure(`$${x.first}$${HEADER_ROW}:$${x.last}$${HEADER_ROW}`)},
-MI,${exposureColumn(x.mixId)},
-${unseenNames()}
-n,SUM(ARRAYFORMULA(IF(uu>1E-12,1,0))),s,SUM(uu),
+  return `=LET(uu,${exposureColumn(x.unseenWeight)},
+n,COUNTIF(uu,">1E-12"),s,SUM(uu),
 IF(n=0,"",n&IF(n=1," holding ("," holdings (")&IF(s<0.01,"less than 1%",TEXT(s,"0%"))&" of your portfolio) "&IF(n=1,"is a fund","are funds")&" we can't see inside."))`;
 }
 
@@ -314,34 +332,13 @@ const SUM_NOTE =
 const OVERLAP_NOTE = "Overlap is the part of the two funds that sits in the same stocks.";
 
 /**
- * The names at the start of the LET of the fund header and of the report
- * spill.
- *
- * LK, LN, LT, LC, LW, LX, and LP are the columns of the lines block: the key,
- * the name, the ticker, the class, the weight, the stock weight, and the part
- * name. LS is the sources block, and LH is the row of the position ids. LS
- * and LH end at the column of position MAX_POSITIONS. fid holds the id of
- * each position that the route looked through, one time each: a fund, or a
- * holding with a mix that holds a fund. f holds each id of fid that holds a
- * stock. fid and f hold one empty string when no fund matches.
- */
-function lineNames() {
-  const x = exposureColumns();
-  const column = (letter) => exposureColumn(letter);
-  return `=LET(LK,${column(x.key)},LN,${column(x.name)},LT,${column(x.ticker)},LC,${column(x.class)},LW,${column(x.weight)},LX,${column(x.stock)},LP,${column(x.part)},
-LS,${exposure(`$${x.first}$${FIRST_DATA_ROW}:$${x.last}`)},LH,${exposure(`$${x.first}$${HEADER_ROW}:$${x.last}$${HEADER_ROW}`)},
-fid,IFNA(UNIQUE(FILTER(${column(x.fundId)},${column(x.fundId)}<>"")),""),
-f,IFNA(FILTER(fid,MAP(fid,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,"${STOCK_PART}")<>0,FALSE)))),""),`;
-}
-
-/**
  * The formula of the fund header, in column H of row TABLE_ROW: the header of
- * the columns of the funds that hold a stock, one column for each fund. The
- * header is empty when no fund holds a stock.
+ * the columns of the funds that hold a stock, one column for each fund, from
+ * the stock fund block. The header is empty when no fund holds a stock.
  */
 function fundHeaderFormula() {
-  return `${lineNames()}
-TRANSPOSE(f))`;
+  const fund = exposureColumn(exposureColumns().stockFund);
+  return `=IFNA(TRANSPOSE(FILTER(${fund},${fund}<>"")),"")`;
 }
 
 /**
@@ -350,13 +347,20 @@ TRANSPOSE(f))`;
  * of the funds that we can't see inside, the block of the holdings that are
  * not stocks, the total, and the fund overlap list.
  *
+ * LN, LT, LW, LX, and LP are the columns of the lines block: the name, the
+ * ticker, the weight, the stock weight, and the part name. LS is the sources
+ * block, and LH is the row of the position ids. LS and LH end at the column
+ * of position MAX_POSITIONS. f holds each id of the stock fund block, or one
+ * empty string when the block is empty.
+ *
  * Each row of the lines block is one part of a line. pw is the weight of the
  * part: the stock weight on a row of the stock part, and the weight minus the
- * stock weight on a row of the other part. dw is the part of pw that came
- * through no fund. A company row is a row of the stock part with a stock
- * weight at or above the threshold, whatever the class of the line. The
- * source cells of that row are the stock part of each source, so the Direct
- * column and the fund columns add up to the row.
+ * stock weight on a row of the other part. dw is the direct weight column of
+ * the lines block: the part of pw that came through no fund. A company row
+ * is a row of the stock part with a stock weight at or above the threshold,
+ * whatever the class of the line. The source cells of that row are the stock
+ * part of each source, so the Direct column and the fund columns add up to
+ * the row.
  *
  * The section of the funds that we can't see inside gives one row to each
  * holding with no mix whose lines of the class unknown hold UNSEEN_FLOOR or
@@ -369,12 +373,15 @@ TRANSPOSE(f))`;
  * gets. Each piece of the section has a seventh column. The text "x" in it
  * marks a row that the section drops.
  *
- * A row of the other part gets a row of its own when the class of its line
- * is not stock and the line is a residual line, holds a direct position, or
- * has the class unknown. Each other row of the other part goes into the
- * group of its class. The groups of the classes stock and fund always get a
- * row. Another group with a value under 100 goes into one row of small
- * holdings.
+ * The script writes the rows of the other part that get a row of their own
+ * into the own block, and the groups of the other rows of the other part
+ * into the group block. A row of the other part gets a row of its own when
+ * the class of its line is not stock and the line is a residual line, holds
+ * a direct position, or has the class unknown. Each other row of the other
+ * part goes into the group of its class. keep selects the rows of the own
+ * block, and grp selects the rows of the group block. The groups of the
+ * classes stock and fund always get a row. Another group with a value under
+ * 100 goes into one row of small holdings.
  *
  * The formula finds the Symbol and the Description columns of the Holdings
  * tab by the header text in row 1, as B5 finds the Value column. When B5
@@ -386,7 +393,9 @@ function reportFormula() {
   const x = exposureColumns();
   const column = (letter) => exposureColumn(letter);
   const floor = UNSEEN_FLOOR;
-  return `${lineNames()}
+  return `=LET(LN,${column(x.name)},LT,${column(x.ticker)},LW,${column(x.weight)},LX,${column(x.stock)},LP,${column(x.part)},
+LS,${exposure(`$${x.first}$${FIRST_DATA_ROW}:$${x.last}`)},LH,${exposure(`$${x.first}$${HEADER_ROW}:$${x.last}$${HEADER_ROW}`)},
+f,IFNA(FILTER(${column(x.stockFund)},${column(x.stockFund)}<>""),""),
 hh,Holdings!$1:$1,
 hs,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Symbol"))),
 hd,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Description"))),
@@ -394,10 +403,8 @@ tot,IF(ISNUMBER($B$${TOTAL_ROW}),$B$${TOTAL_ROW},NA()),thr,$B$${THRESHOLD_ROW},
 MI,${column(x.mixId)},MW,${column(x.mixWeight)},ME,${column(x.mixEntered)},
 MT,${column(x.mixTicker)},MP,${column(x.mixPart)},MS,${column(x.mixSubstitute)},
 hn,LAMBDA(n,IF(ISNA(hs)+ISNA(hd),n,IFNA(XLOOKUP(n,INDIRECT("Holdings!C"&hs,FALSE),INDIRECT("Holdings!C"&hd,FALSE)),n))),
-num,ARRAYFORMULA(IF(ISNUMBER(LS),LS,0)),
-isf,MAP(LH,LAMBDA(h,IF(h="",0,IF(ISNUMBER(XMATCH(h,fid)),1,0)))),
 pw,ARRAYFORMULA(IF(LP="${STOCK_PART}",LX,IF(LP="${OTHER_PART}",LW-LX,0))),
-dw,ARRAYFORMULA(IF(LP="",0,pw-MMULT(num,TRANSPOSE(isf)))),
+dw,${column(x.direct)},
 sel,ARRAYFORMULA((LP="${STOCK_PART}")*ISNUMBER(LX)*(LX>=thr)),
 top,IF(SUM(sel)=0,HSTACK("","No company at or above the threshold."),
  LET(blk,SORT(HSTACK(FILTER(LN,sel),FILTER(LT,sel),FILTER(LX,sel),FILTER(dw,sel),FILTER(LS,sel)),3,FALSE),
@@ -435,24 +442,23 @@ cd,IF(cdn=0,cx,
 cv,VSTACK(cu,cs,cd),
 can,IFNA(FILTER(CHOOSECOLS(cv,1,2,3,4,5),CHOOSECOLS(cv,7)<>"x"),{"We can see inside each of your holdings.","","","",""}),
 cb,MAKEARRAY(ROWS(can),1,LAMBDA(i,j,"")),
-own,ARRAYFORMULA((LP="${OTHER_PART}")*(LC<>"stock")*(((LEFT(LK,9)="residual:")+(ABS(dw)>1E-12)+(LC="unknown"))>0)),
-grp,ARRAYFORMULA((LP="${OTHER_PART}")*(own=0)),
-keep,ARRAYFORMULA(own*IF((LEFT(LK,9)="residual:")*(pw=0),0,1)),
+keep,ARRAYFORMULA(ISNUMBER(${column(x.ownWeight)})),
 nown,SUM(keep),
-on,FILTER(LN,keep),ok,FILTER(LK,keep),oc,FILTER(LC,keep),ow,FILTER(pw,keep),os,FILTER(LS,keep),
+on,FILTER(${column(x.ownName)},keep),ok,FILTER(${column(x.ownKey)},keep),oc,FILTER(${column(x.ownClass)},keep),
+ow,FILTER(${column(x.ownWeight)},keep),came,FILTER(${column(x.ownSources)},keep),
 oname,IF(ISNA(hs)+ISNA(hd),on,
  LET(sc,INDIRECT("Holdings!C"&hs,FALSE),sy,ARRAYFORMULA(IF(ROW(sc)=1,"",sc)),de,INDIRECT("Holdings!C"&hd,FALSE),
   MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,sy,de),n))))),
 kind,MAP(ok,oc,on,LAMBDA(k,c,n,IF(LEFT(k,9)="residual:","not looked through",IF(RIGHT(n,16)=" (not described)","not described",
  SWITCH(c,"fund","fund, no holdings data","unknown","not in the SEC data",c))))),
-came,BYROW(os,LAMBDA(r,IFERROR(TEXTJOIN(", ",TRUE,FILTER(LH,r<>"",r<>0)),""))),
 ownRows,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),
-cls,UNIQUE(FILTER(LC,grp)),
-gw,MAP(cls,LAMBDA(x,SUM(FILTER(pw,grp,LC=x)))),
-gn,MAP(cls,LAMBDA(x,ROWS(FILTER(pw,grp,LC=x)))),
+grp,ARRAYFORMULA(ISNUMBER(${column(x.groupWeight)})),
+cls,FILTER(${column(x.groupClass)},grp),
+gw,FILTER(${column(x.groupWeight)},grp),
+gn,FILTER(${column(x.groupCount)},grp),
 gl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,"stock","Bonds and other securities of companies you hold as stock","fund","Funds held by your funds, not looked through","cash","Cash and money market funds inside funds","derivative","Derivatives inside funds","treasury","Treasury securities inside funds","other","Other holdings inside funds",x&" inside funds")&" ("&TEXT(m,"#,##0")&")")),
 gk,MAP(cls,LAMBDA(x,SWITCH(x,"stock","bond or other security","fund","fund, not looked through",x))),
-gf,MAP(cls,LAMBDA(x,TEXTJOIN(", ",TRUE,MAP(LH,LAMBDA(y,IF(y="","",IF(SUM(FILTER(INDEX(num,0,XMATCH(y,LH)),grp,LC=x))<>0,y,""))))))),
+gf,FILTER(${column(x.groupSources)},grp),
 grpAll,HSTACK(gl,gk,ARRAYFORMULA(gw*tot),gw,gf),
 big,ARRAYFORMULA(IF((cls="stock")+(cls="fund")>0,1,IF(ISNUMBER(gw*tot),IF(ABS(gw*tot)>=100,1,0),1))),
 sm,ARRAYFORMULA(1-big),
@@ -494,10 +500,11 @@ IFNA(VSTACK(top,rest,"",
 /**
  * The layout of the tab Concentration.Exposure. The cells hold the layout
  * version and the labels. The refresh writes the status, the time, the
- * answer, and the mix block. A good refresh also writes its start time and
- * its seconds into the run-time block A15:B24, newest first. The grid holds
- * the source column of each position up to MAX_POSITIONS. One narrow empty
- * column separates each block from the next.
+ * answer, the mix block, the unseen block, the stock fund block, the own
+ * block, the group block, and the direct weights. A good refresh also writes
+ * its start time and its seconds into the run-time block A15:B24, newest
+ * first. The grid holds the source column of each position up to
+ * MAX_POSITIONS. One narrow empty column separates each block from the next.
  */
 function exposureLayout() {
   const x = exposureColumns();
@@ -522,10 +529,18 @@ function exposureLayout() {
       [span(OVERLAP_COLUMN, OVERLAP_WIDTH)]: 110,
       [letter(MIX_COLUMN - 1)]: 24,
       [span(MIX_COLUMN, MIX_FIELDS.length)]: 110,
+      [letter(UNSEEN_COLUMN - 1)]: 24,
+      [span(UNSEEN_COLUMN, UNSEEN_FIELDS.length)]: 110,
+      [letter(STOCK_FUND_COLUMN - 1)]: 24,
+      [letter(STOCK_FUND_COLUMN)]: 110,
+      [letter(OWN_COLUMN - 1)]: 24,
+      [span(OWN_COLUMN, OWN_FIELDS.length)]: 110,
+      [letter(GROUP_COLUMN - 1)]: 24,
+      [span(GROUP_COLUMN, GROUP_FIELDS.length)]: 110,
       [letter(LINE_COLUMN - 1)]: 24,
       [letter(LINE_COLUMN)]: 220,
       [letter(LINE_COLUMN + 1)]: 260,
-      [`${letter(LINE_COLUMN + 2)}:${x.part}`]: 90,
+      [`${letter(LINE_COLUMN + 2)}:${x.direct}`]: 90,
       [`${x.first}:${x.last}`]: 110,
     },
     cells: [
@@ -539,7 +554,11 @@ function exposureLayout() {
         values: [["firstId", "secondId", "overlap", "sharedLineCount"]],
       },
       { range: header(MIX_COLUMN, MIX_FIELDS.length), values: [MIX_FIELDS] },
-      { range: header(LINE_COLUMN, LINE_FIELDS.length + 1), values: [[...LINE_FIELDS, "part"]] },
+      { range: header(UNSEEN_COLUMN, UNSEEN_FIELDS.length), values: [UNSEEN_FIELDS] },
+      { range: header(STOCK_FUND_COLUMN, STOCK_FUND_FIELDS.length), values: [STOCK_FUND_FIELDS] },
+      { range: header(OWN_COLUMN, OWN_FIELDS.length), values: [OWN_FIELDS] },
+      { range: header(GROUP_COLUMN, GROUP_FIELDS.length), values: [GROUP_FIELDS] },
+      { range: header(LINE_COLUMN, LINE_FIELDS.length + 2), values: [[...LINE_FIELDS, "part", "directWeight"]] },
       { range: "A14:B14", values: [["runStart", "seconds"]] },
       { range: "A26:B26", values: [["equity", "value"]] },
       { range: "A27:A31", values: EQUITY_NAMES.map((name) => [name]) },
@@ -571,7 +590,12 @@ function exposureLayout() {
       { range: data(x.mixWeight), numberFormat: "0.00000" },
       { range: data(x.mixEntered), numberFormat: "yyyy-mm-dd" },
       { range: data(x.mixPart), numberFormat: "0.00000" },
+      { range: data(x.unseenWeight), numberFormat: "0.00000" },
+      { range: data(x.ownWeight), numberFormat: "0.00000" },
+      { range: data(x.groupWeight), numberFormat: "0.00000" },
+      { range: data(x.groupCount), numberFormat: "#,##0" },
       { range: `${x.weight}5:${x.stock}`, numberFormat: "0.00000" },
+      { range: data(x.direct), numberFormat: "0.00000" },
       { range: `${x.first}5:${x.last}`, numberFormat: "0.00000" },
     ],
     conditional: [],
