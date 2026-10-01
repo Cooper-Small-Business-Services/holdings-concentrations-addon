@@ -7,9 +7,12 @@
  * answer. layout.gs holds the layout of the two tabs. The script creates each
  * of them that is absent, and it replaces both when the hidden tab holds
  * another layout version. It reads no other tab, and it writes no other tab.
- * The menu item Refresh of the add-on menu is the one way to run it. The
- * add-on menu is under Extensions, with the name of the add-on. Each good
- * refresh also records its time in the hidden tab.
+ * The menu item Refresh of the add-on menu is the one way to run the
+ * report. The add-on menu is under Extensions, with the name of the add-on.
+ * Each good refresh also draws the bar chart of the report tab again and
+ * records its time in the hidden tab. The simple trigger onEdit draws the
+ * bar chart again after an edit of the threshold cell. It sends no request
+ * and writes no cell.
  *
  * The user properties of each person hold the API key of that person. The
  * menu item Set API key writes it. The script does not use the script
@@ -292,6 +295,33 @@ const DIRECT_COLUMN = PART_COLUMN + 1;
 const SOURCE_COLUMN = DIRECT_COLUMN + 1;
 
 /**
+ * The first column of the chart block, IT. One empty column separates it
+ * from the column of position MAX_POSITIONS. The block holds a header in
+ * row HEADER_ROW and CHART_ROWS data rows. Its columns are the company name,
+ * Direct, CHART_FUNDS fund columns, and Other funds. ensureTabs writes the
+ * block after both tabs exist. The write of the answer writes no cell of the
+ * block.
+ */
+const CHART_COLUMN = SOURCE_COLUMN + MAX_POSITIONS + 1;
+
+/**
+ * The count of companies that the bar chart can show, the count of funds
+ * that get a series of their own, and the count of columns of the chart
+ * block.
+ */
+const CHART_ROWS = 100;
+const CHART_FUNDS = 5;
+const CHART_BLOCK_WIDTH = CHART_FUNDS + 3;
+
+/**
+ * The column of the anchor cell, JC. One empty column separates it from the
+ * chart block. Row HEADER_ROW holds its label, and row FIRST_DATA_ROW holds
+ * the anchor cell: the row of the report tab where the bar chart starts.
+ * ensureTabs writes the anchor cell after both tabs exist.
+ */
+const ANCHOR_COLUMN = CHART_COLUMN + CHART_BLOCK_WIDTH + 1;
+
+/**
  * The row of the header of the run-time block, A14:B14. The block holds one
  * row for each good refresh from row 15: the start time in column A and the
  * seconds in column B, newest first.
@@ -332,6 +362,55 @@ function onOpen() {
  */
 function onInstall() {
   onOpen();
+}
+
+/**
+ * Draw the bar chart of the report tab again after an edit of the threshold
+ * cell. The spreadsheet runs this simple trigger after each edit by a
+ * person, in AuthMode.LIMITED, which gives it the spreadsheet and no
+ * network. It sends no request and writes no cell.
+ *
+ * The function returns at once, with no log line, when no event object
+ * exists or the event has no range, as for a run from the script editor.
+ * It also returns at once unless the edited range is one cell in
+ * column B of the report tab, in the row whose label in column A is the
+ * label of the threshold, as readInputs finds it. It also returns when
+ * typedShare gives no threshold for the value of the edit. Then it calls
+ * drawChart with that threshold. It catches each error, logs the message
+ * and the stack of the error with console.error, and returns, so a failed
+ * draw shows no error on the edit.
+ */
+function onEdit(e) {
+  if (!e || !e.range) return;
+  try {
+    const range = e.range;
+    if (range.getNumRows() !== 1 || range.getNumColumns() !== 1 || range.getColumn() !== 2) return;
+    const sheet = range.getSheet();
+    if (sheet.getName() !== REPORT_TAB || range.getRow() > INPUT_ROWS) return;
+    const labels = sheet.getRange(1, 1, Math.min(INPUT_ROWS, sheet.getMaxRows()), 1).getValues();
+    if (range.getRow() !== labelIndex(labels, INPUTS.threshold.label) + 1) return;
+    const threshold = typedShare(e.value);
+    if (threshold === null) return;
+    drawChart(SpreadsheetApp.getActiveSpreadsheet(), threshold);
+  } catch (error) {
+    const { message = String(error), stack = "" } = Object(error);
+    console.error(`The chart draw after an edit of the threshold failed: ${message}`, stack);
+  }
+}
+
+/**
+ * The share from 0 to 1 that the value of an edit event gives, as the
+ * threshold cell holds it, or null. A number stays as it is. A text is a
+ * number with a dot as the decimal mark and an optional percent sign at the
+ * end, so 10% and 0.1 both give 0.1. A value outside 0 to 1, an empty
+ * value, and each other text give null.
+ */
+function typedShare(value) {
+  if (typeof value === "number") return value >= 0 && value <= 1 ? value : null;
+  const match = /^(\d+(?:\.\d*)?|\.\d+)\s*(%?)$/.exec(cellText(value));
+  if (match === null) return null;
+  const share = Number(match[1]) / (match[2] === "%" ? 100 : 1);
+  return share <= 1 ? share : null;
 }
 
 /**
@@ -385,10 +464,14 @@ function refreshConcentration() {
  * layout.gs. A fault writes the status cell B1 and the time cell B2 alone, so
  * the last good answer stays in the other cells.
  *
+ * A good refresh draws the bar chart of the report tab again after the
+ * status, with drawChart and the threshold of readInputs. A fault draws no
+ * chart, so the chart of the last good refresh stays.
+ *
  * A good refresh records its time in the run-time block. The time starts at
- * the start of this function. It ends after the write of the answer and the
- * status. SpreadsheetApp.flush applies the pending writes before the end, so
- * the time includes them. A fault records no time.
+ * the start of this function. It ends after the write of the answer, the
+ * status, and the chart. SpreadsheetApp.flush applies the pending writes
+ * before the end, so the time includes them. A fault records no time.
  */
 function runRefresh() {
   const started = new Date();
@@ -448,6 +531,7 @@ function runRefresh() {
   const ids = positions.map((position) => position.id);
   writeAnswer(out, ids, answer, mixRows(positions, mixes));
   writeStatus(out, "OK");
+  drawChart(book, readInputs(book.getSheetByName(REPORT_TAB)).threshold);
   SpreadsheetApp.flush();
   recordRun(out, started, (Date.now() - started.getTime()) / 1000);
 }
@@ -1043,13 +1127,15 @@ function fitGrid(sheet, rows, columns) {
  * column of the last position. The function clears three areas: the columns
  * after lastColumn from row 4, the rows after topLast from column B to the
  * column before the lines block, and the rows after lineLast from the lines
- * block to lastColumn. Each area ends at the last row and the last column
- * that hold a value. Column A and the cells that the new answer writes keep
- * their values.
+ * block to lastColumn. Each area ends at the last row that holds a value.
+ * Each area ends at the last column that holds a value, and at the column
+ * of position MAX_POSITIONS at most, so the chart block and the anchor cell
+ * keep their formulas. Column A and the cells that the new answer writes
+ * keep their values.
  */
 function clearStale(sheet, topLast, lineLast, lastColumn) {
   const lastRow = sheet.getLastRow();
-  const oldColumn = sheet.getLastColumn();
+  const oldColumn = Math.min(sheet.getLastColumn(), SOURCE_COLUMN + MAX_POSITIONS - 1);
   if (lastRow < HEADER_ROW) return;
   if (oldColumn > lastColumn) {
     sheet.getRange(HEADER_ROW, lastColumn + 1, lastRow - HEADER_ROW + 1, oldColumn - lastColumn).clearContent();
@@ -1063,13 +1149,12 @@ function clearStale(sheet, topLast, lineLast, lastColumn) {
 
 /**
  * Set the number format `@` on the text columns from row 5: D:E, G, P:Q, U,
- * X, AB, AE, AG:AI, AK, AM, AP, and AR:AU. Also set it on row 4 from column
- * BA. A name that starts with `=`, `+`, `-`, or `@` then stays text, and a
- * ticker such as 0700 stays text.
+ * X, AB, AE, AG:AI, AK, AM, AP, and AR:AU. Also set it on row 4 of the
+ * sources block, BA4:IR4. A name that starts with `=`, `+`, `-`, or `@` then
+ * stays text, and a ticker such as 0700 stays text.
  */
 function setTextFormat(sheet) {
   const dataRows = sheet.getMaxRows() - HEADER_ROW;
-  const lastColumn = sheet.getMaxColumns();
   const text = (column, count) => sheet.getRange(FIRST_DATA_ROW, column, dataRows, count).setNumberFormat("@");
   text(FUND_COLUMN, 2);
   text(FUND_COLUMN + 3, 1);
@@ -1083,7 +1168,7 @@ function setTextFormat(sheet) {
   text(GROUP_COLUMN, 1);
   text(GROUP_COLUMN + GROUP_FIELDS.indexOf("groupSources"), 1);
   text(LINE_COLUMN, 4);
-  sheet.getRange(HEADER_ROW, SOURCE_COLUMN, 1, lastColumn - SOURCE_COLUMN + 1).setNumberFormat("@");
+  sheet.getRange(HEADER_ROW, SOURCE_COLUMN, 1, MAX_POSITIONS).setNumberFormat("@");
 }
 
 /**

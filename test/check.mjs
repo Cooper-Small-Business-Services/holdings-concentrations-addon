@@ -28,6 +28,31 @@
  * that the script writes the two data blocks alone, clears the cells of the
  * last answer outside them, and fits the rows of the grid to the answer.
  *
+ * Each good run draws the bar chart of the report tab again. The fake of the
+ * chart builder keeps the ranges, the colors, the title, the anchor, and the
+ * options of the chart. The harness reads the formulas of the chart block
+ * and of the anchor cell as text, and it checks that they read the report
+ * tab alone. At each SpreadsheetApp.flush, the spreadsheet fake calculates
+ * the header row of the chart block and the anchor cell with the rules of
+ * those formulas: the series of the company table for the threshold, and
+ * the row under the chart header row of the spill. It also puts the text of
+ * the chart header row into column A of the report tab, in the row above
+ * the anchor row. getValues gives the calculated value of such a cell in
+ * place of its formula. The harness checks that the chart reads each column
+ * whose header holds a text, and that it anchors at the calculated row.
+ *
+ * The simple trigger onEdit gets fake edit events. The harness checks that
+ * an edit of the threshold cell draws the chart again, that each other edit
+ * and each value outside 0 to 1 draws nothing, and that onEdit catches an
+ * error of the draw and gives it to console.error. It checks that onEdit
+ * with no event object returns and logs nothing, and that a chart header
+ * row with a comma as the decimal mark matches. A lag fake gives the old
+ * value of the anchor cell and of the chart header row for a count of
+ * reads, as a slow spill does right after an edit. The harness checks that
+ * the draw waits for the fresh values, and that a header that stays old for
+ * the whole wait leaves the chart as it is. The fake of Utilities.sleep
+ * records each wait and returns at once.
+ *
  * The last runs put tabs of another layout version into the spreadsheet
  * fake. They check that a refresh replaces those tabs and keeps the values
  * that the person typed.
@@ -234,6 +259,48 @@ const MAX_POSITIONS = 200;
 const TAB_ROWS = 1000;
 
 /**
+ * The chart block of the Concentration.Exposure tab: its first column IT,
+ * one empty column after the column of position MAX_POSITIONS, the count of
+ * data rows under the header in row 4, the count of fund columns, and the
+ * count of columns. The columns are the company name, Direct, the fund
+ * columns, and Other funds.
+ */
+const CHART_AT = SOURCE_AT + MAX_POSITIONS + 1;
+const CHART_ROWS = 100;
+const CHART_FUNDS = 5;
+const CHART_WIDTH = CHART_FUNDS + 3;
+
+/**
+ * The column of the anchor cell JC5, one empty column after the chart block,
+ * and the count of blank rows of the band under the chart header row of the
+ * report spill.
+ */
+const ANCHOR_AT = CHART_AT + CHART_WIDTH + 1;
+const BAND_ROWS = 26;
+
+/**
+ * The fixed colors of the series of the bar chart: Direct, the five funds in
+ * rank order, and Other funds.
+ */
+const DIRECT_COLOR = "#2a78d6";
+const FUND_COLORS = ["#f26e3b", "#037952", "#eba007", "#c75d87", "#036503"];
+const OTHER_COLOR = "#a9a7a0";
+
+/**
+ * The options that the script sets on the bar chart with setOption. Apps
+ * Script checks no option name, so the harness checks each name and value.
+ * The width is the width of the columns A to D of the report tab.
+ */
+const CHART_OPTIONS = {
+  "annotations.total.enabled": true,
+  hAxis: { format: "0%" },
+  height: 520,
+  legend: { position: "top" },
+  useFirstColumnAsDomain: true,
+  width: 250 + 300 + 150 + 175,
+};
+
+/**
  * The first row of the equity block of the Concentration.Exposure tab.
  */
 const EQUITY_ROW = 27;
@@ -257,6 +324,7 @@ const TOTAL_CELL = "B6";
 const NOTE_CELL = "B4";
 const COVERAGE_CELL = "B12";
 const SPILL_CELL = "A26";
+const REPORT_ROW = 26;
 
 /**
  * The texts of the report that a person reads about the funds not looked
@@ -342,6 +410,8 @@ class FakeSheet {
     this.rules = [];
     this.hidden = false;
     this.frozenRows = 0;
+    this.charts = [];
+    this.calculated = new Map();
   }
 
   record(op, extra = {}) {
@@ -410,6 +480,26 @@ class FakeSheet {
     this.record("setConditionalFormatRules", { count: rules.length });
   }
 
+  getCharts() {
+    return [...this.charts];
+  }
+
+  newChart() {
+    return fakeChartBuilder();
+  }
+
+  insertChart(chart) {
+    this.charts.push(chart);
+    this.record("insertChart");
+  }
+
+  removeChart(chart) {
+    const index = this.charts.indexOf(chart);
+    if (index < 0) throw new Error(`The sheet "${this.name}" holds no such chart.`);
+    this.charts.splice(index, 1);
+    this.record("removeChart");
+  }
+
   getRange(first, column, rows = 1, columns = 1) {
     let bounds = { row: first, column, rows, columns };
     if (typeof first === "string") bounds = parseA1(first, this.getMaxRows(), this.getMaxColumns());
@@ -459,6 +549,30 @@ class FakeSheet {
       });
     });
     return this.getRange(1, 1, lastRow, lastColumn);
+  }
+
+  /**
+   * The value that a cell shows, by its row and its column: the calculated
+   * value of a formula when the fake calculated one, else the content of the
+   * cell.
+   */
+  shown(row, column) {
+    const key = cellKey(row, column);
+    return this.calculated.has(key) ? this.calculated.get(key) : this.grid[row - 1][column - 1];
+  }
+
+  /**
+   * The value that the script reads from a cell, by its row and its column.
+   * A cell of state.lagging gives its old value while it has reads left,
+   * and each read uses one. Each other cell gives the value of shown.
+   */
+  read(row, column) {
+    const lag = state.lagging.size === 0 ? undefined : state.lagging.get(`${this.name}!${cellKey(row, column)}`);
+    if (lag !== undefined && lag.reads > 0) {
+      lag.reads -= 1;
+      return lag.value;
+    }
+    return this.shown(row, column);
   }
 
   /**
@@ -516,6 +630,26 @@ class FakeRange {
     return { row, column, rows, columns };
   }
 
+  getSheet() {
+    return this.sheet;
+  }
+
+  getRow() {
+    return this.row;
+  }
+
+  getColumn() {
+    return this.column;
+  }
+
+  getNumRows() {
+    return this.rows;
+  }
+
+  getNumColumns() {
+    return this.columns;
+  }
+
   record(op, extra = {}) {
     this.sheet.record(op, { ...this.bounds(), ...extra });
   }
@@ -543,11 +677,13 @@ class FakeRange {
   }
 
   getValues() {
-    return this.sheet.block(this.row, this.column, this.rows, this.columns).map((cells) => [...cells]);
+    return Array.from({ length: this.rows }, (_, r) =>
+      Array.from({ length: this.columns }, (_, c) => this.sheet.read(this.row + r, this.column + c)),
+    );
   }
 
   getValue() {
-    return this.sheet.grid[this.row - 1][this.column - 1];
+    return this.sheet.read(this.row, this.column);
   }
 
   setValues(values) {
@@ -559,6 +695,7 @@ class FakeRange {
         this.sheet.grid[this.row - 1 + r][this.column - 1 + c] = value;
       });
     });
+    this.eachCell((key) => this.sheet.calculated.delete(key));
     this.record("setValues");
     return this;
   }
@@ -567,6 +704,7 @@ class FakeRange {
     for (let r = this.row; r < this.row + this.rows; r += 1) {
       for (let c = this.column; c < this.column + this.columns; c += 1) this.sheet.grid[r - 1][c - 1] = "";
     }
+    this.eachCell((key) => this.sheet.calculated.delete(key));
     this.record("clearContent");
     return this;
   }
@@ -684,11 +822,75 @@ function fakeBuilder(methods) {
 }
 
 /**
+ * A builder of an embedded bar chart with the methods of an Apps Script
+ * EmbeddedChartBuilder and EmbeddedBarChartBuilder that the script calls.
+ * Each method records its arguments in the chart. A call of another method
+ * fails the harness, because the builder has no such member. setOption
+ * keeps each option by its name, as Apps Script does, and checks no name.
+ * The method `build` returns the chart with getRanges.
+ */
+function fakeChartBuilder() {
+  const chart = {
+    type: null,
+    ranges: [],
+    numHeaders: null,
+    stacked: false,
+    title: null,
+    colors: null,
+    position: null,
+    options: {},
+  };
+  const builder = {
+    asBarChart: () => {
+      chart.type = "BAR";
+      return builder;
+    },
+    addRange: (range) => {
+      chart.ranges.push(range);
+      return builder;
+    },
+    setNumHeaders: (count) => {
+      chart.numHeaders = count;
+      return builder;
+    },
+    setStacked: () => {
+      chart.stacked = true;
+      return builder;
+    },
+    setTitle: (title) => {
+      chart.title = title;
+      return builder;
+    },
+    setColors: (colors) => {
+      chart.colors = [...colors];
+      return builder;
+    },
+    setPosition: (row, column, offsetX, offsetY) => {
+      chart.position = { row, column, offsetX, offsetY };
+      return builder;
+    },
+    setOption: (name, value) => {
+      chart.options[name] = value;
+      return builder;
+    },
+    build: () => {
+      const built = { ...chart, ranges: [...chart.ranges], options: { ...chart.options } };
+      built.getRanges = () => [...built.ranges];
+      return built;
+    },
+  };
+  return builder;
+}
+
+/**
  * The state of the fakes that the runs change: the log of changes, the user
  * properties, the document properties, the answers of the key dialog, the
  * messages of the alerts, the sidebars, the lock, the fetch handler, the
- * fetch calls, the menus, the tabs that the script asked for, and the state
- * of the tabs at the time of each request.
+ * fetch calls, the menus, the tabs that the script asked for, the state of
+ * the tabs at the time of each request, the flag that stops the
+ * calculation of the chart cells at a flush, the cells that give an old
+ * value for a count of reads, the waits of Utilities.sleep, and the calls of
+ * console.warn and console.error.
  */
 const state = {
   log: [],
@@ -706,6 +908,10 @@ const state = {
   menus: [],
   tabsAsked: new Set(),
   atFetch: [],
+  frozenValues: false,
+  lagging: new Map(),
+  sleeps: [],
+  logged: [],
 };
 
 /**
@@ -802,6 +1008,7 @@ const services = {
     getUi: fakeUi,
     flush: () => {
       state.log.push({ op: "flush" });
+      if (!state.frozenValues) calculateChart();
     },
     newConditionalFormatRule: () =>
       fakeBuilder({
@@ -846,6 +1053,17 @@ const services = {
         month: "2-digit",
         day: "2-digit",
       }).format(date);
+    },
+    sleep: (ms) => {
+      state.sleeps.push(ms);
+    },
+  },
+  console: {
+    warn: (...args) => {
+      state.logged.push({ level: "warn", args });
+    },
+    error: (...args) => {
+      state.logged.push({ level: "error", args });
     },
   },
   LockService: {
@@ -1168,7 +1386,8 @@ function acceptedDefinition(tab) {
  * The expected state of a new tab from its accepted definition file, in the
  * form of FakeSheet.state. The function applies the Sheets API meaning of
  * each key of the file: a style entry sets only the properties that it names,
- * and a later entry wins.
+ * and a later entry wins. A cell entry with `eachRow` puts its one row of
+ * values into each row of its range.
  */
 function expectedState(definition) {
   const format = definition.format ?? {};
@@ -1177,7 +1396,8 @@ function expectedState(definition) {
   const sheet = new FakeSheet(definition.tab, rows, columns, []);
   for (const entry of definition.cells) {
     const b = parseA1(entry.range, rows, columns);
-    entry.values.forEach((cells, r) => {
+    const values = entry.eachRow ? Array.from({ length: b.rows }, () => entry.eachRow) : entry.values;
+    values.forEach((cells, r) => {
       cells.forEach((value, c) => {
         sheet.grid[b.row - 1 + r][b.column - 1 + c] = value;
       });
@@ -1303,14 +1523,33 @@ function checkKept(before, name) {
 
 /**
  * Check that a run with tabs of the current layout creates no tab, deletes
- * no tab, changes no part of the report tab, and changes no cell of the
- * Holdings tab. `names` holds the tabs of the spreadsheet in their order.
+ * no tab, changes no cell and no format of the report tab, and changes no
+ * cell of the Holdings tab. A good run, with OK in B1, removes the chart of
+ * the last draw when one exists, then inserts one chart when the company
+ * table gives a series. A fault changes no chart. `names` holds the tabs of
+ * the spreadsheet in their order.
  */
 function checkNoTabChange(reportBefore, logFrom, name, names = ["Holdings", EXPOSURE_TAB, REPORT_TAB]) {
   const entries = state.log.slice(logFrom);
+  const chartOps = entries.filter((e) => e.op === "insertChart" || e.op === "removeChart").map((e) => e.op);
+  const good = book.tab(EXPOSURE_TAB).cell("B1") === "OK";
+  const count = (op) => chartOps.filter((o) => o === op).length;
+  const before = book.tab(REPORT_TAB).charts.length - count("insertChart") + count("removeChart");
+  const want = expectedSeries(book.tab(EXPOSURE_TAB), book.tab(REPORT_TAB).cell(THRESHOLD_CELL));
+  const drawn = want.direct || want.funds > 0 || want.other;
+  const expected = good ? [...(before > 0 ? ["removeChart"] : []), ...(drawn ? ["insertChart"] : [])] : [];
+  check(
+    JSON.stringify(chartOps) === JSON.stringify(expected),
+    `${name}: ${good ? "a good run removes the chart of the last draw, then inserts one chart when a series exists" : "a fault changes no chart"} ` +
+      `(${chartOps.join(", ") || "no chart change"})`,
+  );
   check(
     !entries.some((e) => e.op === "insertSheet" || e.op === "deleteSheet"),
     `${name}: the script creates no tab and deletes no tab`,
+  );
+  check(
+    blockWritesSince(logFrom).length === 0,
+    `${name}: both tabs hold the current layout, so the script writes no cell of the chart block`,
   );
   check(
     JSON.stringify(book.names()) === JSON.stringify(names),
@@ -1318,9 +1557,195 @@ function checkNoTabChange(reportBefore, logFrom, name, names = ["Holdings", EXPO
   );
   check(book.tab(REPORT_TAB).state() === reportBefore, `${name}: no cell and no format of the report tab changes`);
   check(
-    entries.every((e) => e.sheet === undefined || e.sheet === EXPOSURE_TAB),
-    `${name}: the script changes the Concentration.Exposure tab alone`,
+    entries.every(
+      (e) =>
+        e.sheet === undefined ||
+        e.sheet === EXPOSURE_TAB ||
+        (e.sheet === REPORT_TAB && (e.op === "insertChart" || e.op === "removeChart")),
+    ),
+    `${name}: the script changes the Concentration.Exposure tab and the chart of the report tab alone`,
   );
+}
+
+/**
+ * The series that the bar chart must show for the Concentration.Exposure tab
+ * and a threshold. The companies are the rows of the stock part with a stock
+ * weight at or above the threshold, largest first, CHART_ROWS at most, as in
+ * the company table. Direct is present when the direct weights of those
+ * rows, each rounded to 12 decimals, add up to a number other than 0. A fund
+ * of the stock fund block counts when its source cells of those rows add up
+ * to a number other than 0. The first CHART_FUNDS funds that count get a
+ * series each, and Other funds is present when more funds count.
+ */
+function expectedSeries(sheet, threshold) {
+  const ids = sheet.block(4, SOURCE_AT, 1, MAX_POSITIONS)[0];
+  const at = (column) => column - LINE_AT;
+  const stockAt = LINE_FIELDS.indexOf("stockWeight");
+  const listed = sheet
+    .block(5, LINE_AT, sheet.getMaxRows() - 4, SOURCE_AT - LINE_AT + MAX_POSITIONS)
+    .filter(
+      (cells) => cells[at(PART_AT)] === "stock" && typeof cells[stockAt] === "number" && cells[stockAt] >= threshold,
+    )
+    .sort((a, b) => b[stockAt] - a[stockAt]);
+  const rows = listed.slice(0, CHART_ROWS);
+  const direct = rows.reduce((sum, cells) => sum + Math.round(cells[at(DIRECT_AT)] * 1e12) / 1e12, 0);
+  const counted = blockRows(sheet, STOCK_FUND_AT, 1).filter(
+    ([id]) => sumCells(rows.map((cells) => cells[at(SOURCE_AT) + ids.indexOf(id)])) !== 0,
+  ).length;
+  return {
+    direct: direct !== 0,
+    funds: Math.min(counted, CHART_FUNDS),
+    other: counted > CHART_FUNDS,
+    companies: rows.length,
+    listed: listed.length,
+  };
+}
+
+/**
+ * The row of the report tab under the chart header row of the report spill,
+ * for a count of companies at or above the threshold. The spill holds these
+ * rows from row 26: the title Your holdings, the header of the section, one
+ * row for each holding group and the Total row or one note row, a blank row,
+ * the trust note, the header of the company table, the company rows or one
+ * note row, the row of the companies under the threshold, a blank row, and
+ * the chart header row. A holding group is a key of the Holdings tab with a
+ * number in Value: its Symbol, or its Description when the Symbol is empty,
+ * cut to 64 characters.
+ */
+function anchorRow(companies) {
+  const [header, ...rows] = book.tab("Holdings").grid;
+  const at = Object.fromEntries(
+    ["Symbol", "Description", "Value"].map((name) => [name, header.findIndex((v) => String(v).trim() === name)]),
+  );
+  let yours = 1;
+  if (Object.values(at).every((i) => i >= 0)) {
+    const keys = rows
+      .filter((cells) => typeof cells[at.Value] === "number")
+      .map((cells) => (String(cells[at.Symbol]).trim() || String(cells[at.Description]).trim()).slice(0, 64));
+    if (keys.length > 0) yours = new Set(keys).size + 1;
+  }
+  return REPORT_ROW + 8 + yours + Math.max(1, companies);
+}
+
+/**
+ * Calculate the header row of the chart block and the anchor cell of the
+ * Concentration.Exposure tab, as Google Sheets calculates their formulas,
+ * and keep the values in the calculated map of the tab. The header holds
+ * Company, then Direct when the Direct series is present, the name of each
+ * fund series, and Other funds when that series is present, by
+ * expectedSeries. Each other header cell is empty. The fund names are
+ * placeholders, because the draw reads only whether a header cell holds a
+ * text. The anchor cell holds anchorRow for the count of the companies at
+ * or above the threshold. Column A of the report tab holds the text of the
+ * chart header row, by spillHeading, in the row above the anchor row, and
+ * no other calculated value. The function calculates nothing while a header
+ * cell or the anchor cell holds no formula, such as before ensureTabs
+ * writes them.
+ */
+function calculateChart() {
+  const hidden = book.tab(EXPOSURE_TAB);
+  const report = book.tab(REPORT_TAB);
+  if (hidden === undefined || report === undefined || hidden.getMaxColumns() < ANCHOR_AT) return;
+  const cells = [...hidden.grid[3].slice(CHART_AT - 1, CHART_AT - 1 + CHART_WIDTH), hidden.grid[4][ANCHOR_AT - 1]];
+  if (!cells.every((value) => typeof value === "string" && value.startsWith("="))) return;
+  const want = expectedSeries(hidden, report.cell(THRESHOLD_CELL));
+  const names = [
+    "Company",
+    want.direct ? "Direct" : "",
+    ...Array.from({ length: CHART_FUNDS }, (_, k) => (k < want.funds ? `Fund ${k + 1}` : "")),
+    want.other ? "Other funds" : "",
+  ];
+  names.forEach((name, i) => hidden.calculated.set(cellKey(4, CHART_AT + i), name));
+  hidden.calculated.set(cellKey(5, ANCHOR_AT), anchorRow(want.listed));
+  report.calculated.clear();
+  report.calculated.set(cellKey(anchorRow(want.listed) - 1, 1), spillHeading(report.cell(THRESHOLD_CELL)));
+}
+
+/**
+ * The text of the chart header row of the report spill for a threshold, as
+ * TEXT(threshold,"0.00%") gives it in the spill formula.
+ */
+function spillHeading(threshold) {
+  return `Companies at or over ${(threshold * 100).toFixed(2)}% of the portfolio, by source`;
+}
+
+/**
+ * The text of an options object with its keys in order, for a comparison.
+ */
+function sortedJson(value) {
+  if (Array.isArray(value)) return `[${value.map(sortedJson).join(",")}]`;
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${sortedJson(value[key])}`)
+    .join(",")}}`;
+}
+
+/**
+ * Check the bar chart of the report tab after a draw, and give the series of
+ * expectedSeries and the anchor row. The anchor cell JC5 holds the row under
+ * the chart header row of the spill, by anchorRow. The report tab holds one
+ * chart: a stacked bar chart with one header row, anchored at column A of
+ * the row of the anchor cell with no offset. Each range of the chart is one
+ * column of the chart block from row 4 to row 4 + CHART_ROWS, so the range
+ * never moves. The columns are the company names, then each column whose
+ * header holds a text: Direct, the fund columns, and Other funds, in this
+ * order. The colors and the options follow. The chart has no title, and its
+ * width is the width of the columns A to D of the report tab.
+ */
+function checkChart(name) {
+  const report = book.tab(REPORT_TAB);
+  const hidden = book.tab(EXPOSURE_TAB);
+  const want = expectedSeries(hidden, report.cell(THRESHOLD_CELL));
+  const anchor = hidden.shown(5, ANCHOR_AT);
+  check(
+    anchor === anchorRow(want.listed),
+    `${name}: the anchor cell JC5 holds row ${anchorRow(want.listed)}, under the chart header row (${anchor})`,
+  );
+  const header = Array.from({ length: CHART_WIDTH }, (_, i) => hidden.shown(4, CHART_AT + i));
+  const offsets = [0, ...header.map((_, o) => o).filter((o) => o > 0 && header[o] !== "")];
+  if (offsets.length === 1) {
+    check(
+      report.charts.length === 0,
+      `${name}: no header after Company holds a text, so the report tab holds no chart (${report.charts.length})`,
+    );
+    return { ...want, series: 0, anchor };
+  }
+  check(report.charts.length === 1, `${name}: the report tab holds one chart (${report.charts.length})`);
+  const [chart] = report.charts;
+  check(chart.type === "BAR" && chart.stacked === true, `${name}: the chart is a stacked bar chart`);
+  check(
+    sortedJson(chart.position) === sortedJson({ row: anchor, column: 1, offsetX: 0, offsetY: 0 }),
+    `${name}: the chart anchors at A${anchor}, the first row of the band, with no offset ` +
+      `(${JSON.stringify(chart.position)})`,
+  );
+  const bounds = chart.ranges.map((range) => range.bounds());
+  check(
+    chart.ranges.every((range) => range.sheet === hidden) &&
+      bounds.every((b) => b.row === 4 && b.rows === CHART_ROWS + 1 && b.columns === 1) &&
+      JSON.stringify(bounds.map((b) => b.column - CHART_AT)) === JSON.stringify(offsets),
+    `${name}: the chart reads the columns ${offsets.join(", ")} of the chart block, each from row 4 to row ` +
+      `${4 + CHART_ROWS} (${bounds.map((b) => `${b.row},${b.column},${b.rows},${b.columns}`).join("; ")})`,
+  );
+  check(chart.numHeaders === 1, `${name}: row 4 of the block gives the series names`);
+  const colors = offsets
+    .slice(1)
+    .map((o) => (o === 1 ? DIRECT_COLOR : o <= 1 + CHART_FUNDS ? FUND_COLORS[o - 2] : OTHER_COLOR));
+  check(
+    JSON.stringify(chart.colors) === JSON.stringify(colors),
+    `${name}: each series has its fixed color (${JSON.stringify(chart.colors)})`,
+  );
+  check(chart.title === null && !("title" in chart.options), `${name}: the chart has no title (${chart.title})`);
+  const span = [1, 2, 3, 4].reduce((sum, column) => sum + report.widths.get(column), 0);
+  check(
+    chart.options.width === span,
+    `${name}: the chart spans the columns A to D of the report tab (${chart.options.width} px for ${span} px)`,
+  );
+  check(
+    sortedJson(chart.options) === sortedJson(CHART_OPTIONS),
+    `${name}: the chart options are ${sortedJson(CHART_OPTIONS)} (${sortedJson(chart.options)})`,
+  );
+  return { ...want, series: chart.ranges.length - 1, anchor };
 }
 
 /**
@@ -1447,6 +1872,60 @@ function writesSince(from) {
 function indexSince(from, test) {
   const index = state.log.slice(from).findIndex(test);
   return index < 0 ? -1 : from + index;
+}
+
+/**
+ * The indexes of the setValues entries of the log from the index `from` that
+ * write a cell of the chart block IT4:JA104 or the anchor cell JC5 of the
+ * Concentration.Exposure tab.
+ */
+function blockWritesSince(from) {
+  const meets = (e, row, column, rows, columns) =>
+    e.row <= row + rows - 1 &&
+    e.row + e.rows - 1 >= row &&
+    e.column <= column + columns - 1 &&
+    e.column + e.columns - 1 >= column;
+  const writes = [];
+  state.log.slice(from).forEach((e, i) => {
+    if (e.op !== "setValues" || e.sheet !== EXPOSURE_TAB) return;
+    if (meets(e, 4, CHART_AT, CHART_ROWS + 1, CHART_WIDTH) || meets(e, 5, ANCHOR_AT, 1, 1)) writes.push(from + i);
+  });
+  return writes;
+}
+
+/**
+ * Check, by the order of the log from the index `from`, that a run which
+ * replaced a tab writes the chart block and the anchor cell as the last step
+ * of ensureTabs: one setValues call for IT4:JA104, then one for JC5, after
+ * the creation of the report tab and after each other tab operation of the
+ * run, and before the request.
+ */
+function checkBlockWrite(name, from) {
+  const writes = blockWritesSince(from);
+  const write = state.log[writes[0]] ?? {};
+  const anchor = state.log[writes[1]] ?? {};
+  check(
+    writes.length === 2 &&
+      write.row === 4 &&
+      write.column === CHART_AT &&
+      write.rows === CHART_ROWS + 1 &&
+      write.columns === CHART_WIDTH,
+    `${name}: ensureTabs writes the chart block IT4:JA${4 + CHART_ROWS} with one call (${writes.length} calls)`,
+  );
+  check(
+    anchor.row === 5 && anchor.column === ANCHOR_AT && anchor.rows === 1 && anchor.columns === 1,
+    `${name}: then ensureTabs writes the anchor cell JC5 with one call`,
+  );
+  const reportAt = indexSince(from, (e) => e.op === "insertSheet" && e.sheet === REPORT_TAB);
+  const fetchAt = indexSince(from, (e) => e.op === "fetch");
+  const tabOpsAt = state.log
+    .slice(from, fetchAt)
+    .map((e, i) => (["insertSheet", "deleteSheet", "hideSheet"].includes(e.op) ? from + i : -1));
+  check(
+    reportAt >= 0 && writes[0] > reportAt && writes[0] > Math.max(...tabOpsAt) && writes[1] < fetchAt,
+    `${name}: the writes of the block and the anchor cell follow the creation of the report tab and each other ` +
+      "tab operation, and precede the request",
+  );
 }
 
 /**
@@ -1921,17 +2400,24 @@ function main() {
   for (const file of SCRIPT_FILES) {
     const source = readFileSync(file, "utf8");
     const name = file.slice(SRC.length + 1);
-    for (const text of ["ScriptApp", "newTrigger", "getScriptProperties", "Logger", "console."]) {
+    for (const text of ["ScriptApp", "newTrigger", "getScriptProperties", "Logger"]) {
       check(!source.includes(text), `${name} holds no "${text}" text`);
     }
+    check(
+      [...source.matchAll(/console\.(\w+)/g)].every(([, method]) => method === "warn" || method === "error"),
+      `${name} calls console.warn and console.error alone`,
+    );
     vm.runInContext(source, context, { filename: file });
   }
   for (const name of [
     "onOpen",
     "onInstall",
+    "onEdit",
     "setApiKey",
     "refreshConcentration",
     "ensureTabs",
+    "writeChartBlock",
+    "drawChart",
     "readInputs",
     "showMixSidebar",
     "mixSidebarData",
@@ -1965,8 +2451,8 @@ function main() {
 
   /**
    * Check that a good run put its start time and its seconds at the top of
-   * the run-time block, and that the block holds the 10 newest good runs
-   * alone, newest first.
+   * the run-time block, that the block holds the 10 newest good runs alone,
+   * newest first, and that the run drew the bar chart.
    */
   const checkRecorded = (name, times) => {
     const rows = runRows();
@@ -1978,6 +2464,7 @@ function main() {
     );
     runStarts.unshift(start);
     checkBlock(name);
+    checkChart(name);
   };
 
   /**
@@ -2035,6 +2522,31 @@ function main() {
   check(
     context.daySerial("1899-12-30") === 0 && context.daySerial("2026-09-30") === 46295,
     "daySerial gives the date serial number of Google Sheets",
+  );
+  check(
+    ["10%", "0.1", " 10 % ", ".1", 0.1].every((value) => context.typedShare(value) === 0.1) &&
+      context.typedShare("100%") === 1 &&
+      context.typedShare("0") === 0,
+    "typedShare reads a typed 10% and a typed 0.1 as the share 0.1",
+  );
+  check(
+    ["150%", "1.5", "-1%", "ten", "1,5", "", undefined, null, 2, -0.5].every(
+      (value) => context.typedShare(value) === null,
+    ),
+    "typedShare gives no share for a value outside 0 to 1, an empty value, or a text that is not a number",
+  );
+  check(
+    [0.1, 0.01, 0.025, 1, 0].every((share) => context.headingText(share) === spillHeading(share)) &&
+      context.headingText(0.01005) === spillHeading(0.0101),
+    "headingText gives the text of the chart header row with the threshold as a percent with two decimals, and " +
+      "1.005% rounds up",
+  );
+  check(
+    context.sameHeading(spillHeading(0.1).replace(".", ","), context.headingText(0.1)) &&
+      context.sameHeading(spillHeading(0.1), context.headingText(0.1)) &&
+      !context.sameHeading(spillHeading(0.05).replace(".", ","), context.headingText(0.1)),
+    "sameHeading accepts the chart header row with a comma or a dot as the decimal mark, and refuses another " +
+      "threshold",
   );
   const part = (ticker, percent, substitute = false) => ({ ticker, percent, substitute });
   check(context.mixProblem([part("VOO", 60), part("IVV", 40)]) === "", "a mix of 100% is valid");
@@ -2365,6 +2877,7 @@ function main() {
   );
   const [snap] = state.atFetch;
   check(snap.names.length === 3, "both tabs exist at the time of the request");
+  checkBlockWrite("run 1", logStart);
   const created = Object.fromEntries(snap.tabs);
   for (const tab of [EXPOSURE_TAB, REPORT_TAB]) checkLayout(tab, created[tab], accepted[tab]);
   const report = book.tab(REPORT_TAB);
@@ -2463,6 +2976,113 @@ function main() {
     exposureStyles.get(cellKey(4, lastSource))?.fontWeight === "bold" &&
       exposureStyles.get(cellKey(5, lastSource))?.numberFormat === "0.00000",
     `the header format and the number format of the sources block reach column ${lastSource}`,
+  );
+
+  check(
+    vm.runInContext("CHART_COLUMN", context) === CHART_AT && CHART_AT === lastSource + 2,
+    `the chart block starts at column ${CHART_AT}, one empty column after the sources block`,
+  );
+  check(
+    vm.runInContext("ANCHOR_COLUMN", context) === ANCHOR_AT,
+    `the anchor cell is in column ${ANCHOR_AT}, one empty column after the chart block`,
+  );
+  const chartBlock = exposureState.grid
+    .slice(3, 4 + CHART_ROWS)
+    .map((cells) => cells.slice(CHART_AT - 1, CHART_AT - 1 + CHART_WIDTH));
+  const [chartHeader, chartRow] = chartBlock;
+  check(
+    chartBlock.flat().every((value) => typeof value === "string" && value.startsWith("=")),
+    `each of the ${chartBlock.flat().length} cells of the chart block IT4:JA${4 + CHART_ROWS} is a formula`,
+  );
+  check(
+    exposureState.grid[0].length === ANCHOR_AT &&
+      exposureState.grid.every((cells) => cells[CHART_AT - 2] === "" && cells[ANCHOR_AT - 2] === "") &&
+      exposureState.grid.slice(4 + CHART_ROWS).every((cells) => cells.slice(CHART_AT - 1).every((v) => v === "")) &&
+      exposureState.grid.every((cells, r) => r === 3 || r === 4 || cells[ANCHOR_AT - 1] === ""),
+    "the grid ends at the anchor column, the two gap columns are empty, and no cell under the block or around " +
+      "the anchor cell holds a value",
+  );
+  /**
+   * The text of the chart header row of the spill, as an expression with
+   * the threshold.
+   */
+  const heading = (threshold) => `"Companies at or over "&TEXT(${threshold},"0.00%")&" of the portfolio, by source"`;
+  check(
+    report
+      .cell(SPILL_CELL)
+      .includes(
+        ` top,rest,"",\n ${heading("thr")},\n MAKEARRAY(${BAND_ROWS},1,LAMBDA(i,j,"")),\n HSTACK("","Fund overlap"),`,
+      ),
+    `${SPILL_CELL} puts the chart header row with the threshold and a band of ${BAND_ROWS} blank rows between the ` +
+      "company table and the fund overlap list",
+  );
+  check(
+    (BAND_ROWS - 1) * 21 >= CHART_OPTIONS.height && (BAND_ROWS - 2) * 21 < CHART_OPTIONS.height,
+    `the band of ${BAND_ROWS} rows holds the ${CHART_OPTIONS.height} px of the chart at 21 px a row, and one row of margin`,
+  );
+  check(
+    exposureState.grid[3][ANCHOR_AT - 1] === "chartRow" &&
+      exposureState.grid[4][ANCHOR_AT - 1] ===
+        `=IFERROR(XMATCH(${heading("'Concentration'!$B$23")},'Concentration'!$A:$A)+1,"")`,
+    "the anchor cell JC5 finds the text of the chart header row in column A of the report tab, with the threshold " +
+      "cell, and adds 1",
+  );
+  check(
+    chartBlock.slice(1).every((cells) => JSON.stringify(cells) === JSON.stringify(chartRow)) &&
+      chartRow.every((formula) => formula.includes("r,ROW()-4,")),
+    `each of the ${CHART_ROWS} data rows holds the formulas of row 5, which find the company of rank ROW()-4`,
+  );
+  check(
+    chartHeader[0] === '="Company"' &&
+      chartHeader[1].includes(
+        `IF(m=0,"",IF(SUM(CHOOSEROWS('Concentration'!$G$26:$G,SEQUENCE(m,1,h+1)))=0,"","Direct"))`,
+      ) &&
+      chartHeader.at(-1).includes(`IF(m=0,"",LET(g,`) &&
+      chartHeader.at(-1).includes(`IF(nz<=${CHART_FUNDS},"","Other funds")`),
+    "the header row names the company column; the Direct header is empty when the direct weights of the companies " +
+      `add up to 0, and the Other funds header is empty with ${CHART_FUNDS} funds or fewer`,
+  );
+  check(
+    [1, 2, 3, 4, 5].every(
+      (k) =>
+        chartHeader[1 + k].includes(`LEFT(INDEX('Concentration'!$H$26:$Z,h,INDEX(o,${k})),24)`) &&
+        chartRow[1 + k].includes(`INDEX(g,r,INDEX(o,${k}))`),
+    ),
+    "fund column k shows the fund at place k of the order o, and its header is the id of the fund, cut to 24 characters",
+  );
+  check(
+    chartRow.every((formula) => formula.includes('IF(r>m,"",')),
+    "a data row with no company of its rank is blank",
+  );
+  check(
+    chartRow.at(-1).includes(`IF(nz<=${CHART_FUNDS},"",`) && chartRow.at(-1).includes(`XMATCH(j,o)>${CHART_FUNDS}`),
+    `the Other funds column adds each fund after place ${CHART_FUNDS}, and it is blank with ${CHART_FUNDS} funds or fewer`,
+  );
+  const blockReferences = chartBlock
+    .flat()
+    .flatMap((formula) => [...formula.matchAll(/'([^']+)'!\$?([A-Z]+)\$?(\d+)/g)]);
+  check(
+    blockReferences.length > 0 &&
+      blockReferences.every((m) => m[1] === REPORT_TAB && m[3] === "26" && ["A", "B", "G", "H"].includes(m[2])),
+    "each formula of the chart block reads the company table of the report spill alone: the columns A, B, G, and " +
+      "H:Z from row 26, and no value that the script computes",
+  );
+  const blockRanges = new Set(blockReferences.map((m) => `${m[2]}${m[3]}`));
+  check(
+    JSON.stringify([...blockRanges].sort()) === JSON.stringify(["A26", "B26", "G26", "H26"]),
+    `the chart block reads the rank, the company, the direct, and the fund columns of the spill (${[...blockRanges].join(", ")})`,
+  );
+  const exposureReads = formulas
+    .filter((f) => f.at.startsWith(`${REPORT_TAB} `))
+    .flatMap(({ value }) => [...value.matchAll(/'Concentration\.Exposure'!\$?([A-Z]+)\$?\d+(?::\$?([A-Z]+))?/g)])
+    .flatMap((m) => [m[1], m[2]].filter(Boolean));
+  check(
+    exposureReads.length > 0 && exposureReads.every((letters) => columnNumber(letters) <= lastSource),
+    `no formula of the report tab reads a column after column ${lastSource}, so the chart block makes no circular reference`,
+  );
+  check(
+    report.cell(SPILL_CELL).includes('SPARKLINE(x,{"charttype","bar";"max",mx;"color1","#2a78d6"})'),
+    "the company table keeps its column of SPARKLINE bars",
   );
 
   const reportFormulas = formulas.filter((f) => f.at.startsWith(`${REPORT_TAB} `));
@@ -2623,7 +3243,7 @@ function main() {
   );
 
   const ids = sent.map((p) => p.id);
-  const idCells = x.block(4, SOURCE_AT, 1, x.getMaxColumns() - SOURCE_AT + 1)[0];
+  const idCells = x.block(4, SOURCE_AT, 1, MAX_POSITIONS)[0];
   check(
     ids.every((id, i) => idCells[i] === id),
     "AJ4 onward holds the ids in the body order",
@@ -2695,12 +3315,23 @@ function main() {
       if (value !== "" && x.grid[r][c] !== value) lostLabels.push(`row ${r + 1} column ${c + 1}`);
     });
   });
-  check(lostLabels.length === 0, `each label of Concentration.Exposure stays after the write (${lostLabels.join()})`);
+  check(
+    lostLabels.length === 0,
+    `each label and formula of Concentration.Exposure stays after the write (${lostLabels.slice(0, 3).join(", ")})`,
+  );
 
   const afterFetch = state.log.slice(fetchAt + 1);
   check(
-    afterFetch.every((e) => e.sheet === EXPOSURE_TAB || e.op === "flush"),
-    "after the request, run 1 changes the Concentration.Exposure tab alone",
+    afterFetch.every(
+      (e) => e.sheet === EXPOSURE_TAB || e.op === "flush" || (e.sheet === REPORT_TAB && e.op === "insertChart"),
+    ),
+    "after the request, run 1 changes the Concentration.Exposure tab and inserts the chart of the report tab alone",
+  );
+  const insertAt = afterFetch.findIndex((e) => e.op === "insertChart");
+  check(
+    afterFetch.filter((e) => e.op === "insertChart").length === 1 &&
+      afterFetch.filter((e) => e.op === "removeChart").length === 0,
+    "run 1 inserts one chart, and removes none, because the new report tab holds no chart",
   );
   check(
     [...state.tabsAsked].every((name) => ["Holdings", EXPOSURE_TAB, REPORT_TAB].includes(name)),
@@ -2714,15 +3345,19 @@ function main() {
   const writeRanges = afterFetch
     .filter((e) => e.op === "setValues")
     .map((e) => `${e.row},${e.column},${e.rows},${e.columns}`);
-  const flushAt = afterFetch.findIndex((e) => e.op === "flush");
+  const flushes = afterFetch.map((e, n) => (e.op === "flush" ? n : -1)).filter((n) => n >= 0);
   const setAt = afterFetch.map((e, n) => (e.op === "setValues" ? n : -1)).filter((n) => n >= 0);
   check(
     writeRanges[2] === "1,2,2,1" && writeRanges[3] === "15,1,10,2",
     `the status write B1:B2 comes before the run-time write A15:B24 (${writeRanges.slice(2).join("; ")})`,
   );
   check(
-    flushAt > setAt[2] && flushAt < setAt[3] && afterFetch.filter((e) => e.op === "flush").length === 1,
-    "run 1 calls SpreadsheetApp.flush once, after the status write and before the run-time write",
+    flushes.length === 2 && flushes[0] > setAt[2] && flushes[0] < insertAt,
+    "run 1 calls SpreadsheetApp.flush after the status write, before the draw reads the chart block",
+  );
+  check(
+    insertAt > setAt[2] && flushes[1] > insertAt && flushes[1] < setAt[3],
+    "run 1 draws the chart, then flushes again before the run-time write, so the run time includes the chart",
   );
   const runOneComputed = checkComputed(x, "run 1", parts.length);
   checkDataWrites(afterFetch, "run 1", topLastOf(x, runOneComputed), parts.length, ids.length, x);
@@ -2743,9 +3378,13 @@ function main() {
       `5,${GROUP_AT},1`,
       `5,${GROUP_AT + 3},1`,
       `5,${LINE_AT},4`,
-      `4,${SOURCE_AT},${x.getMaxColumns() - SOURCE_AT + 1}`,
+      `4,${SOURCE_AT},${MAX_POSITIONS}`,
     ].every((r) => textRanges.includes(r)),
-    "the script sets the text format on D:E, G, P:Q, U, X, AB, AE, AG:AI, AK, AM, AP, AR:AU, and row 4 from BA",
+    "the script sets the text format on D:E, G, P:Q, U, X, AB, AE, AG:AI, AK, AM, AP, AR:AU, and BA4:IR4",
+  );
+  check(
+    afterFetch.every((e) => e.op !== "setNumberFormat" || e.column + e.columns - 1 < CHART_AT),
+    "no number format of a refresh reaches the chart block",
   );
   const firstFormat = afterFetch.findIndex((e) => e.op === "setNumberFormat");
   const firstWrite = afterFetch.findIndex((e) => e.op === "setValues");
@@ -2762,8 +3401,23 @@ function main() {
   const money = lines.find((l) => l.sources && MONEY in l.sources);
   check(money?.class === "fund", `the money market fund line has the class fund (${money?.class})`);
 
-  console.log("\n== Run time of run 1");
+  console.log("\n== Run time and chart of run 1");
   checkRecorded("run 1", runOne);
+  const oneChart = checkChart("run 1");
+  check(
+    oneChart.direct && oneChart.funds === 2 && !oneChart.other && oneChart.companies > 0,
+    `run 1: the companies at or above 1% come from the direct stock and from the two index funds (${oneChart.companies} companies)`,
+  );
+  check(
+    oneChart.series === 1 + oneChart.funds + Number(oneChart.other),
+    `run 1: the chart has 1 + ${oneChart.funds} + ${Number(oneChart.other)} series: Direct, each fund, and Other funds ` +
+      `(${oneChart.series})`,
+  );
+  const drawn = report.charts[0];
+  console.log(
+    `  chart at A${oneChart.anchor}; ranges ${drawn.ranges.map((r) => `${r.row},${r.column},${r.rows},${r.columns}`).join("; ")}`,
+  );
+  console.log(`  colors ${drawn.colors.join(", ")}`);
   check(x.cell("A14") === "runStart" && x.cell("B14") === "seconds", "the header of the run-time block stays");
   console.log(`  A15: ${new Date(runRows()[0][0]).toISOString()}; B15: ${runRows()[0][1]} seconds`);
 
@@ -2794,6 +3448,248 @@ function main() {
     ["equity", "value"],
     EQUITY.map((name, i) => [name, equityCells(x)[i]]),
   );
+
+  console.log("\n== Edit of the threshold cell: the simple trigger onEdit");
+  /**
+   * A fake edit event of one range, in AuthMode.LIMITED, with the value of
+   * the edit when the call gives one.
+   */
+  const edit = (sheet, a1, value) => ({
+    authMode: "LIMITED",
+    source: book,
+    range: sheet.getRange(a1),
+    ...(value === undefined ? {} : { value }),
+  });
+  /**
+   * Call onEdit with an event, check that it throws no error, sends no
+   * request, takes no lock, opens no dialog, and writes no cell, and give the
+   * operations of the log of the call.
+   */
+  const runEdit = (name, event) => {
+    const from = state.log.length;
+    const counts = () => [
+      state.fetchCalls.length,
+      state.lockTaken,
+      state.prompts.length,
+      state.alerts.length,
+      state.sidebars.length,
+    ];
+    const before = counts();
+    let thrown = null;
+    try {
+      context.onEdit(event);
+    } catch (e) {
+      thrown = e;
+    }
+    check(thrown === null, `${name}: onEdit throws no error (${thrown?.message ?? "no error"})`);
+    check(
+      JSON.stringify(counts()) === JSON.stringify(before),
+      `${name}: onEdit sends no request, takes no lock, and opens no dialog`,
+    );
+    const ops = state.log.slice(from).map((e) => e.op);
+    check(
+      ops.every((op) => ["flush", "removeChart", "insertChart"].includes(op)),
+      `${name}: onEdit writes no cell (${ops.join(", ") || "no change"})`,
+    );
+    return ops;
+  };
+  /**
+   * Make the anchor cell and the chart header row above it give their
+   * present values for a count of reads, as a slow spill does right after
+   * an edit. Call it before the edit.
+   */
+  const lag = (reads) => {
+    const anchor = x.shown(5, ANCHOR_AT);
+    state.lagging.set(`${EXPOSURE_TAB}!${cellKey(5, ANCHOR_AT)}`, { value: anchor, reads });
+    state.lagging.set(`${REPORT_TAB}!${cellKey(anchor - 1, 1)}`, { value: report.shown(anchor - 1, 1), reads });
+    return anchor;
+  };
+  /**
+   * The calls of console.warn or of console.error since an index of
+   * state.logged.
+   */
+  const loggedSince = (from, level) => state.logged.slice(from).filter((entry) => entry.level === level);
+
+  const refreshChart = report.charts[0];
+  const bareFrom = state.logged.length;
+  const bare = runEdit("a run from the script editor with no event object", undefined);
+  check(
+    bare.length === 0 && report.charts[0] === refreshChart && state.logged.length === bareFrom,
+    "onEdit() with no event object returns at once, draws nothing, and logs nothing",
+  );
+  const skipFrom = state.logged.length;
+  for (const [name, event] of [
+    ["an edit of the overlap minimum B24", edit(report, MINIMUM_CELL, "20%")],
+    ["an edit of C23 in the threshold row", edit(report, "C23", "5%")],
+    ["an edit of the label A23", edit(report, "A23", "5%")],
+    ["an edit of B22 in column B", edit(report, "B22", "5%")],
+    ["a paste into B23:B24", edit(report, "B23:B24")],
+    ["an edit of B30 in the spill", edit(report, "B30", "5%")],
+    ["an edit of B2 on the Holdings tab", edit(book.tab("Holdings"), "B2", "5%")],
+    ["an edit of B23 on the hidden tab", edit(x, THRESHOLD_CELL, "5%")],
+    ["an edit event with no range", {}],
+    ["an edit of the threshold cell with no value", edit(report, THRESHOLD_CELL)],
+    ["an edit of the threshold to 150%", edit(report, THRESHOLD_CELL, "150%")],
+    ["an edit of the threshold to -1%", edit(report, THRESHOLD_CELL, "-1%")],
+    ["an edit of the threshold to a text", edit(report, THRESHOLD_CELL, "ten")],
+  ]) {
+    const ops = runEdit(name, event);
+    check(
+      ops.length === 0 && report.charts.length === 1 && report.charts[0] === refreshChart,
+      `${name}: onEdit draws nothing`,
+    );
+  }
+  check(
+    state.logged.length === skipFrom,
+    "each edit that draws nothing, and the edit event with no range, logs nothing",
+  );
+
+  const atOne = checkChart("threshold 1% after the refresh");
+  report.grid[22][1] = 0.05;
+  const raised = runEdit("an edit of the threshold to 5%", edit(report, THRESHOLD_CELL, "5%"));
+  check(
+    JSON.stringify(raised) === JSON.stringify(["flush", "removeChart", "insertChart"]),
+    `an edit of the threshold cell flushes, removes the old chart, and inserts one chart (${raised.join(", ")})`,
+  );
+  const atFive = checkChart("threshold 5%");
+  check(
+    atFive.listed < atOne.listed && atFive.anchor < atOne.anchor,
+    `threshold 5%: ${atFive.listed} companies are at or above 5% and ${atOne.listed} at or above 1%, so the ` +
+      `chart moves up from row ${atOne.anchor} to row ${atFive.anchor}`,
+  );
+
+  report.grid[22][1] = 1;
+  const none = runEdit("an edit of the threshold to 100%", edit(report, THRESHOLD_CELL, "1"));
+  check(
+    JSON.stringify(none) === JSON.stringify(["flush", "removeChart"]) && report.charts.length === 0,
+    "threshold 100%: no company is at or above it, so no header after Company holds a text, and onEdit removes " +
+      `the chart and inserts none (${none.join(", ")})`,
+  );
+
+  report.grid[22][1] = 0.01;
+  const back = runEdit("an edit of the threshold back to 1%", edit(report, THRESHOLD_CELL, "0.01"));
+  check(
+    JSON.stringify(back) === JSON.stringify(["flush", "insertChart"]),
+    `an edit of the threshold back to 1% inserts the chart again (${back.join(", ")})`,
+  );
+  const again = checkChart("threshold 1% again");
+  check(
+    again.anchor === atOne.anchor && again.series === atOne.series,
+    "threshold 1% again: the chart is back at the row and with the series of the refresh",
+  );
+  check(
+    state.sleeps.length === 0 && state.logged.filter((entry) => entry.level === "warn").length === 0,
+    `each draw so far reads the fresh chart header row at the first read and waits no time (${state.sleeps.length} waits)`,
+  );
+
+  state.frozenValues = true;
+  ["Company", "", "Fund 1", "Fund 2", "", "", "", ""].forEach((text, i) =>
+    x.calculated.set(cellKey(4, CHART_AT + i), text),
+  );
+  x.calculated.set(cellKey(5, ANCHOR_AT), 40);
+  report.calculated.clear();
+  report.calculated.set(cellKey(39, 1), spillHeading(0.01));
+  context.drawChart(book, 0.01);
+  const planted = report.charts[0];
+  check(
+    report.charts.length === 1 &&
+      JSON.stringify(planted.ranges.map((range) => range.column - CHART_AT)) === "[0,2,3]" &&
+      JSON.stringify(planted.colors) === JSON.stringify(FUND_COLORS.slice(0, 2)) &&
+      planted.position.row === 40,
+    "with an empty Direct header and two fund headers, the chart reads the company column and the two fund " +
+      "columns, with the first two fund colors, at the row of the anchor cell",
+  );
+  report.calculated.set(cellKey(39, 1), spillHeading(0.01).replace(".", ","));
+  context.drawChart(book, 0.01);
+  check(
+    report.charts.length === 1 &&
+      report.charts[0] !== planted &&
+      report.charts[0].position.row === 40 &&
+      state.sleeps.length === 0,
+    "a chart header row with a comma decimal mark, as a comma locale shows it, matches at the first read, and " +
+      "the chart anchors at the row of the anchor cell",
+  );
+  const commaChart = report.charts[0];
+  x.calculated.set(cellKey(5, ANCHOR_AT), "");
+  let warnFrom = state.logged.length;
+  context.drawChart(book, 0.01);
+  check(
+    report.charts.length === 1 && report.charts[0] === commaChart && loggedSince(warnFrom, "warn").length === 1,
+    "an anchor cell with no row number for the whole wait leaves the chart as it is and logs one warning",
+  );
+  state.sleeps.length = 0;
+  state.frozenValues = false;
+  runEdit("an edit of the threshold cell after the planted values", edit(report, THRESHOLD_CELL, "0.01"));
+  checkChart("the draw after the planted values");
+
+  const lastChart = report.charts[0];
+  const failure = new Error("The chart service failed.");
+  report.newChart = () => {
+    throw failure;
+  };
+  const errorFrom = state.logged.length;
+  const failed = runEdit(
+    "an edit of the threshold cell with a failing chart builder",
+    edit(report, THRESHOLD_CELL, "0.01"),
+  );
+  delete report.newChart;
+  check(
+    JSON.stringify(failed) === JSON.stringify(["flush"]) &&
+      report.charts.length === 1 &&
+      report.charts[0] === lastChart,
+    `onEdit catches the error of the draw and returns, and the chart of the last draw stays (${failed.join(", ")})`,
+  );
+  const errors = loggedSince(errorFrom, "error");
+  check(
+    errors.length === 1 &&
+      [failure.message, failure.stack].every((part) => errors[0].args.some((arg) => String(arg).includes(part))),
+    `onEdit gives the message and the stack of the error to console.error (${errors.length} calls)`,
+  );
+
+  const staleFrom = lag(2);
+  report.grid[22][1] = 0.05;
+  const lagged = runEdit(
+    "an edit of the threshold to 5% while the spill lags two reads",
+    edit(report, THRESHOLD_CELL, "5%"),
+  );
+  state.lagging.clear();
+  const fresh = checkChart("threshold 5% after two stale reads");
+  check(
+    JSON.stringify(lagged) === JSON.stringify(["flush", "removeChart", "insertChart"]) &&
+      fresh.anchor === atFive.anchor &&
+      fresh.anchor !== staleFrom &&
+      report.charts[0].position.row === fresh.anchor,
+    `the draw waits for the fresh anchor row ${fresh.anchor} in place of the stale row ${staleFrom} ` +
+      `(${lagged.join(", ")})`,
+  );
+  check(
+    JSON.stringify(state.sleeps) === "[500,500]",
+    `the draw waits 500 ms after each of the two stale reads (${JSON.stringify(state.sleeps)})`,
+  );
+
+  const keptChart = report.charts[0];
+  state.sleeps.length = 0;
+  warnFrom = state.logged.length;
+  lag(Infinity);
+  report.grid[22][1] = 0.01;
+  const stale = runEdit(
+    "an edit of the threshold to 1% while the spill stays stale",
+    edit(report, THRESHOLD_CELL, "0.01"),
+  );
+  state.lagging.clear();
+  check(
+    JSON.stringify(stale) === JSON.stringify(["flush"]) && report.charts.length === 1 && report.charts[0] === keptChart,
+    `a chart header row that stays stale for the whole wait leaves the old chart in place (${stale.join(", ")})`,
+  );
+  check(
+    state.sleeps.every((ms) => ms === 500) &&
+      state.sleeps.reduce((sum, ms) => sum + ms, 0) === 20000 &&
+      loggedSince(warnFrom, "warn").length === 1,
+    `the draw waits 500 ms between reads, 20 s in total, then logs one warning (${state.sleeps.length} waits)`,
+  );
+  state.sleeps.length = 0;
+  runEdit("an edit of the threshold to 1% after the stale spill", edit(report, THRESHOLD_CELL, "0.01"));
+  checkChart("threshold 1% after the stale spill");
 
   const reportState = report.state();
 
@@ -2878,9 +3774,7 @@ function main() {
     "run 2b clears the source columns of positions 31 to 40 from row 4",
   );
   check(
-    x
-      .block(4, SOURCE_AT + 30, x.getMaxRows() - 3, x.getMaxColumns() - SOURCE_AT - 29)
-      .every((c) => c.every((v) => v === "")),
+    x.block(4, SOURCE_AT + 30, x.getMaxRows() - 3, MAX_POSITIONS - 30).every((c) => c.every((v) => v === "")),
     "no id and no cell of positions 31 to 40 of run 2 stays",
   );
   const runTwoBComputed = checkComputed(x, "run 2b", shorterLines);
@@ -2920,12 +3814,12 @@ function main() {
   );
   check(
     x
-      .block(5 + parts.length, LINE_AT, x.getMaxRows() - 4 - parts.length, x.getMaxColumns() - LINE_AT + 1)
+      .block(5 + parts.length, LINE_AT, x.getMaxRows() - 4 - parts.length, SOURCE_AT + MAX_POSITIONS - LINE_AT)
       .every((c) => c.every((v) => v === "")),
     "the rows under the last part row are empty, so no line of run 2 stays",
   );
   check(
-    x.block(4, SOURCE_AT + ids.length, 1, x.getMaxColumns() - SOURCE_AT + 1 - ids.length)[0].every((v) => v === ""),
+    x.block(4, SOURCE_AT + ids.length, 1, MAX_POSITIONS - ids.length)[0].every((v) => v === ""),
     "no id of run 2 follows the last position",
   );
   console.log(`  B1: ${x.cell("B1")}`);
@@ -3559,6 +4453,79 @@ function main() {
     "the part rows of run 1 are back, and the mix block is empty",
   );
 
+  console.log("\n== Run 17: seven funds and a threshold of 2% give five fund series and Other funds");
+  const sevenFunds = ["FA", "FB", "FC", "FD", "FE", "FF", "FG"];
+  replaceHoldings(
+    [...sevenFunds, "SX"].map((symbol) => [symbol, "Example brokerage", 1000, `Example holding ${symbol}`]),
+  );
+  /**
+   * A line of one invented company of the class stock, with its sources.
+   */
+  const companyLine = (key, sources) => {
+    const weight = Object.values(sources).reduce((a, b) => a + b, 0);
+    return {
+      key: `name:${key}`,
+      name: `Example Company ${key}`,
+      ticker: null,
+      lei: null,
+      class: "stock",
+      weight,
+      sources,
+      stockWeight: weight,
+      stockSources: sources,
+    };
+  };
+  const sevenAnswer = {
+    measures: { ...Object.fromEntries(MEASURES.map((name, i) => [name, i + 0.5])), equity: null },
+    funds: sevenFunds.map((id) => ({
+      id,
+      ticker: id,
+      reportDate: "2026-06-30",
+      accessionNumber: "0000000000-26-000001",
+      holdingCount: 10,
+      weight: 0.125,
+      coveredWeight: 0.125,
+      mergedByTicker: 0,
+      mergedByLei: 0,
+      mergedByName: 0,
+    })),
+    overlaps: [],
+    lines: [
+      companyLine("A", { FA: 0.1, FB: 0.05, FC: 0.04, FD: 0.03, FE: 0.02, FF: 0.01, SX: 0.05 }),
+      companyLine("B", { FA: 0.02, FB: 0.02, FF: 0.005 }),
+      companyLine("C", { FC: 0.03 }),
+      companyLine("D", { FG: 0.004 }),
+    ],
+  };
+  book.tab(REPORT_TAB).grid[22][1] = 0.02;
+  const sevenState = book.tab(REPORT_TAB).state();
+  state.fetchHandler = () => fakeResponse(200, JSON.stringify(sevenAnswer));
+  logFrom = state.log.length;
+  pause(2);
+  const runSeven = timedRun();
+  check(x.cell("B1") === "OK", `run 17: B1 is OK (B1 holds "${x.cell("B1")}")`);
+  checkNoTabChange(sevenState, logFrom, "run 17");
+  check(
+    JSON.stringify(blockRows(x, STOCK_FUND_AT, 1).map(([id]) => id)) === JSON.stringify(sevenFunds),
+    "the stock fund block holds the seven funds",
+  );
+  checkRecorded("run 17", runSeven);
+  const sevenChart = checkChart("run 17");
+  check(
+    sevenChart.companies === 3 && sevenChart.direct && sevenChart.funds === 5 && sevenChart.other,
+    "run 17: three companies are at or above 2%, the fund FG has no stock in them, and six funds have, " +
+      "so the chart has Direct, five funds, and Other funds",
+  );
+  check(
+    sevenChart.series === 1 + sevenChart.funds + Number(sevenChart.other) && sevenChart.series === 7,
+    `run 17: the chart has 1 + 5 + 1 series (${sevenChart.series})`,
+  );
+  check(
+    sevenChart.anchor === REPORT_ROW + 8 + 9 + 3,
+    "run 17: the chart anchors under the chart header row, after 8 holding rows, the Total row, and 3 companies " +
+      `(row ${sevenChart.anchor})`,
+  );
+
   /**
    * The accepted state of the report tab with other values in the two cells
    * that a person types in.
@@ -3627,6 +4594,7 @@ function main() {
       ]),
     `run 10 deletes each old tab and creates it again, the hidden tab first (${tabOps(logFrom).join("; ")})`,
   );
+  checkBlockWrite("run 10", logFrom);
   check(
     indexSince(logFrom, (e) => e.op === "fetch") > indexSince(logFrom, (e) => e.op === "hideSheet"),
     "run 10 replaces the tabs before the request",
@@ -3669,6 +4637,7 @@ function main() {
   pause(2);
   const runTwelve = timedRun();
   check(tabOps(logFrom).length === 4, `run 12 deletes and creates both tabs (${tabOps(logFrom).join("; ")})`);
+  checkBlockWrite("run 12", logFrom);
   check(
     JSON.stringify(book.names()) === JSON.stringify(keptOrder),
     "run 12: each new tab takes the position of the old tab",
@@ -3682,6 +4651,15 @@ function main() {
 
   console.log("\n== Run 13: the report tab is absent, and the hidden tab holds the current layout version");
   const stayed = book.tab(EXPOSURE_TAB);
+  /**
+   * The cells of the chart block IT4:JA104 of a grid.
+   */
+  const blockOf = (grid) =>
+    grid.slice(3, 4 + CHART_ROWS).map((cells) => cells.slice(CHART_AT - 1, CHART_AT - 1 + CHART_WIDTH));
+  for (const cells of stayed.grid.slice(3, 4 + CHART_ROWS)) {
+    cells.fill("stale", CHART_AT - 1, CHART_AT - 1 + CHART_WIDTH);
+  }
+  stayed.grid[4][ANCHOR_AT - 1] = "stale";
   book.sheets.splice(book.sheets.indexOf(book.tab(REPORT_TAB)), 1);
   logFrom = state.log.length;
   pause(2);
@@ -3691,6 +4669,18 @@ function main() {
     `run 13 creates the report tab alone (${tabOps(logFrom).join("; ")})`,
   );
   check(book.tab(EXPOSURE_TAB) === stayed, "run 13: the hidden tab stays");
+  checkBlockWrite("run 13", logFrom);
+  check(
+    JSON.stringify(blockOf(JSON.parse(Object.fromEntries(state.atFetch.at(-1).tabs)[EXPOSURE_TAB]).grid)) ===
+      JSON.stringify(blockOf(accepted[EXPOSURE_TAB].grid)),
+    "run 13: at the request, the chart block of the hidden tab holds the formulas of the fixture again, " +
+      "in place of the stale cells",
+  );
+  check(
+    JSON.parse(Object.fromEntries(state.atFetch.at(-1).tabs)[EXPOSURE_TAB]).grid[4][ANCHOR_AT - 1] ===
+      accepted[EXPOSURE_TAB].grid[4][ANCHOR_AT - 1],
+    "run 13: at the request, the anchor cell holds the formula of the fixture again",
+  );
   check(
     JSON.stringify(book.names()) === JSON.stringify(["Holdings", EXPOSURE_TAB, REPORT_TAB]),
     "run 13: the new report tab is the last tab",
@@ -3710,6 +4700,7 @@ function main() {
       JSON.stringify([`insertSheet ${EXPOSURE_TAB}`, `deleteSheet ${REPORT_TAB}`, `insertSheet ${REPORT_TAB}`]),
     `run 14 creates the hidden tab, then deletes and creates the report tab (${tabOps(logFrom).join("; ")})`,
   );
+  checkBlockWrite("run 14", logFrom);
   checkReplaced("run 14", 0.04, 0.1);
   checkRecorded("run 14", runFourteen);
 
