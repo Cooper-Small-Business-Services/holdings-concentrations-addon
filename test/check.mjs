@@ -13,10 +13,11 @@
  * layout of the report. The definition files in test/fixtures/ hold that
  * layout.
  *
- * The harness calculates the two run-time formulas B8 and B9 and the
- * coverage label B11 of the report alone, with a small evaluator. It reads
- * the text of each other formula. No
- * formula can hold a column letter of the Holdings tab. Each range of the
+ * The harness calculates the two run-time formulas B9 and B10 and the
+ * coverage label B12 of the report alone, with a small evaluator. It reads
+ * the text of each other formula. No formula can hold a column letter of the
+ * Holdings tab. No SUM can read a name of a LET that holds TRUE and FALSE,
+ * because SUM adds no TRUE in an array. Each range of the
  * sources block must end at the column of position MAX_POSITIONS. Each
  * FILTER must sit in IFNA or IFERROR, or GUARDED_FILTERS must name it.
  *
@@ -242,24 +243,26 @@ const EQUITY_ROW = 27;
  * and the two cells of the Concentration tab that a person types in.
  */
 const VERSION_CELL = "B3";
-const THRESHOLD_CELL = "B22";
-const MINIMUM_CELL = "B23";
+const THRESHOLD_CELL = "B23";
+const MINIMUM_CELL = "B24";
 
 /**
- * The cells of the Concentration tab: the total value, the note under the
- * status cell, the coverage label, the fund header, and the report spill.
+ * The cells of the Concentration tab: the disclaimer, the subtitle, the total
+ * value, the note under the status cell, the coverage label, and the report
+ * spill.
  */
-const TOTAL_CELL = "B5";
-const NOTE_CELL = "B3";
-const COVERAGE_CELL = "B11";
-const HEADER_CELL = "H25";
+const DISCLAIMER_CELL = "B1";
+const SUBTITLE_CELL = "B2";
+const TOTAL_CELL = "B6";
+const NOTE_CELL = "B4";
+const COVERAGE_CELL = "B12";
 const SPILL_CELL = "A26";
 
 /**
- * The texts of the report that a person reads about the funds that we can't
- * see inside.
+ * The texts of the report that a person reads about the funds not looked
+ * through.
  */
-const UNSEEN_TITLE = "Funds we can't see inside";
+const UNSEEN_TITLE = "Funds not looked through";
 const ADD_MIX_NOTE = "Add its fund mix: Concentration › Describe a fund";
 
 /**
@@ -1726,6 +1729,10 @@ function bigAnswer(ids, lineCount) {
  * states why.
  */
 const GUARDED_FILTERS = {
+  yok: {
+    guards: ["IF(SUM(yok)=0,"],
+    reason: "the section Your holdings uses the Holdings rows only when a row holds a number in Value",
+  },
   sel: {
     guards: ["top,IF(SUM(sel)=0,"],
     reason: "top uses the stock rows only when a stock is at or above the threshold",
@@ -1831,6 +1838,74 @@ function filterTreatment(call, formula) {
   const guarded = GUARDED_FILTERS[call.condition];
   if (guarded && guarded.guards.every((text) => formula.includes(text))) return `guard ${call.condition}`;
   return null;
+}
+
+/**
+ * The arguments of the call whose open parenthesis is at `open`, as texts.
+ * The function skips string literals, and it counts a brace as a
+ * parenthesis.
+ */
+function callArgs(formula, open) {
+  const args = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open; i < formula.length; i += 1) {
+    const ch = formula[i];
+    if (ch === '"') {
+      i += 1;
+      while (i < formula.length && !(formula[i] === '"' && formula[i + 1] !== '"')) i += formula[i] === '"' ? 2 : 1;
+    } else if (ch === "(" || ch === "{") {
+      depth += 1;
+    } else if (ch === ")" || ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        args.push(formula.slice(start, i));
+        return args;
+      }
+    } else if (ch === "," && depth === 1) {
+      args.push(formula.slice(start, i));
+      start = i + 1;
+    }
+  }
+  throw new Error(`The call at ${open} of the formula has no end.`);
+}
+
+/**
+ * The name and the value text of each pair of each LET of a formula with no
+ * string literals.
+ */
+function letDefinitions(code) {
+  const names = new Map();
+  for (const m of code.matchAll(/\bLET\(/g)) {
+    const args = callArgs(code, m.index + m[0].length - 1);
+    for (let k = 0; k + 1 < args.length; k += 2) names.set(args[k].trim(), args[k + 1].trim());
+  }
+  return names;
+}
+
+/**
+ * True when a value text of a LET gives TRUE and FALSE: a comparison, or a
+ * call of ISNUMBER, EXACT, or a function of that kind, with no arithmetic
+ * outside the parentheses. One ARRAYFORMULA around the whole text does not
+ * change the result.
+ */
+function isLogical(text) {
+  let value = text.trim();
+  if (/^ARRAYFORMULA\(/i.test(value)) {
+    const args = callArgs(value, "ARRAYFORMULA".length);
+    if (args.length === 1 && args[0].length + "ARRAYFORMULA()".length === value.length) value = args[0].trim();
+  }
+  let outside = "";
+  let depth = 0;
+  for (const ch of value) {
+    if (ch === "(" || ch === "{") depth += 1;
+    else if (ch === ")" || ch === "}") depth -= 1;
+    else if (depth === 0) outside += ch;
+  }
+  if (/[*+\-/&]/.test(outside)) return false;
+  if (/[=<>]/.test(outside)) return true;
+  const call = /^(ISNUMBER|ISTEXT|ISBLANK|ISNA|ISERROR|ISERR|ISLOGICAL|EXACT|AND|OR|NOT)\(/i.exec(value);
+  return call !== null && callArgs(value, call[0].length - 1).join(",").length + call[0].length + 1 === value.length;
 }
 
 function main() {
@@ -2128,6 +2203,20 @@ function main() {
   placeRows(UNSEEN_AT, computeUnseen);
   placeRows(STOCK_FUND_AT, computeStock);
   checkComputed(computeSheet, "the hand answer", computeParts.length);
+  const handOwn = blockRows(computeSheet, OWN_AT, 5);
+  const handGroups = blockRows(computeSheet, GROUP_AT, 4);
+  const handOther = computeParts
+    .filter((cells) => cells[LINE_FIELDS.length] === "other")
+    .reduce((sum, cells) => sum + cells[LINE_FIELDS.indexOf("weight")] - cells[LINE_FIELDS.indexOf("stockWeight")], 0);
+  const handSection = sumCells(handOwn.map((cells) => cells[3])) + sumCells(handGroups.map((cells) => cells[1]));
+  check(
+    handOwn.some((cells) => cells[2] === "unknown") &&
+      handOwn.some((cells) => String(cells[0]).startsWith("residual:")) &&
+      ["cash", "treasury"].every((kind) => handGroups.some((cells) => cells[0] === kind)) &&
+      Math.abs(handSection - handOther) < 1e-12,
+    "the own rows and the group rows of the hand answer, with lines of the class unknown, a residual line, a cash " +
+      `group, and a treasury group, add up to the Other holdings row of the composition (${handSection} for ${handOther})`,
+  );
 
   const handLines = [
     {
@@ -2331,12 +2420,10 @@ function main() {
    */
   const sourceRangesOf = (cell) =>
     [...report.cell(cell).matchAll(exposureRange)].filter((m) => columnNumber(m[1]) === firstSource);
-  for (const cell of [NOTE_CELL, HEADER_CELL]) {
-    check(
-      sourceRangesOf(cell).length === 0,
-      `${cell} reads a block that the script computes, and no range of the sources block`,
-    );
-  }
+  check(
+    sourceRangesOf(NOTE_CELL).length === 0,
+    `${NOTE_CELL} reads a block that the script computes, and no range of the sources block`,
+  );
   const spillRanges = sourceRangesOf(SPILL_CELL);
   check(
     spillRanges.length === 2,
@@ -2348,17 +2435,15 @@ function main() {
       `(${spillRanges.map((m) => m[0]).join(", ")})`,
   );
   check(
-    [NOTE_CELL, HEADER_CELL, SPILL_CELL].every(
-      (cell) => !/\b(MMULT|BYROW)\(|\bnum,|\bisf,|\bfid,/.test(report.cell(cell)),
-    ),
-    `${NOTE_CELL}, ${HEADER_CELL}, and ${SPILL_CELL} hold no MMULT, no BYROW, and no num, isf, or fid`,
+    [NOTE_CELL, SPILL_CELL].every((cell) => !/\b(MMULT|BYROW)\(|\bnum,|\bisf,|\bfid,/.test(report.cell(cell))),
+    `${NOTE_CELL} and ${SPILL_CELL} hold no MMULT, no BYROW, and no num, isf, or fid`,
   );
   for (const text of [
-    "thr,$B$22,",
+    "thr,$B$23,",
     'sel,ARRAYFORMULA((LP="stock")*ISNUMBER(LX)*(LX>=thr)),',
     'rsel,ARRAYFORMULA((LP="stock")*ISNUMBER(LX)*(LX<thr)),',
     'rf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,"stock",LX,"<"&thr),0))),',
-    "psel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$23)),",
+    "psel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$24)),",
     "IF(ABS(gw*tot)>=100,1,0)",
   ]) {
     check(
@@ -2411,6 +2496,26 @@ function main() {
   check(
     Object.keys(GUARDED_FILTERS).every((condition) => usedGuards.has(condition)),
     "each entry of GUARDED_FILTERS guards a FILTER call",
+  );
+  check(
+    isLogical("ARRAYFORMULA(ISNUMBER('Concentration.Exposure'!$AJ$5:$AJ))") &&
+      isLogical('ARRAYFORMULA(LP="stock")') &&
+      !isLogical("ARRAYFORMULA(ISNUMBER('Concentration.Exposure'!$AJ$5:$AJ)*1)") &&
+      !isLogical('ARRAYFORMULA((LP="stock")*ISNUMBER(LX))'),
+    "isLogical finds an array of TRUE and FALSE, and passes an array of 1 and 0",
+  );
+  const logicalSums = [];
+  for (const { at, value } of formulas) {
+    const { code } = splitLiterals(value);
+    const names = letDefinitions(code);
+    for (const m of code.matchAll(/\bSUM\(([A-Za-z_][A-Za-z0-9_]*)\)/g)) {
+      if (names.has(m[1]) && isLogical(names.get(m[1]))) logicalSums.push(`${at}: SUM(${m[1]})`);
+    }
+  }
+  check(
+    logicalSums.length === 0,
+    "no SUM reads a LET name that holds TRUE and FALSE, so the counts nown and ng of the section Other holdings " +
+      `are not 0 (${logicalSums.join(", ")})`,
   );
   console.log("  pass");
   console.log("\nFILTER calls and their treatment:");
@@ -2954,12 +3059,12 @@ function main() {
     rowsNow.map(([start, seconds], n) => [`${15 + n}`, new Date(start).toISOString(), seconds]),
   );
 
-  console.log("\n== Run-time formulas B8 and B9 of the report");
-  const lastFormula = report.cell("B8");
-  const averageFormula = report.cell("B9");
+  console.log("\n== Run-time formulas B9 and B10 of the report");
+  const lastFormula = report.cell("B9");
+  const averageFormula = report.cell("B10");
   check(
-    report.cell("A8") === "Last run time" && report.cell("A9") === "Average (last 10)",
-    "A8 and A9 hold the labels of the run time",
+    report.cell("A9") === "Last run time" && report.cell("A10") === "Average (last 10)",
+    "A9 and A10 hold the labels of the run time",
   );
   const known = (seconds) => {
     const sheet = new FakeSheet(EXPOSURE_TAB, 30, 4, []);
@@ -2982,20 +3087,20 @@ function main() {
     const sheet = known(c.seconds);
     const last = calculate(lastFormula, sheet);
     const average = calculate(averageFormula, sheet);
-    check(c.last === "" ? last === "" : near(last, c.last), `${c.name}: B8 is ${JSON.stringify(c.last)} (${last})`);
+    check(c.last === "" ? last === "" : near(last, c.last), `${c.name}: B9 is ${JSON.stringify(c.last)} (${last})`);
     check(
       c.average === "" ? average === "" : near(average, c.average),
-      `${c.name}: B9 is ${JSON.stringify(c.average)} (${average})`,
+      `${c.name}: B10 is ${JSON.stringify(c.average)} (${average})`,
     );
     formulaRows.push([c.name, c.seconds.join(", ") || "(none)", JSON.stringify(last), JSON.stringify(average)]);
   }
   const recorded = runRows().map(([, seconds]) => seconds);
-  check(near(calculate(lastFormula, x), recorded[0]), "B8 gives B15 of the Exposure tab after eleven good runs");
+  check(near(calculate(lastFormula, x), recorded[0]), "B9 gives B15 of the Exposure tab after eleven good runs");
   check(
     near(calculate(averageFormula, x), recorded.reduce((a, b) => a + b, 0) / 10),
-    "B9 gives the average of the 10 kept runs of the Exposure tab",
+    "B10 gives the average of the 10 kept runs of the Exposure tab",
   );
-  table(["block", "seconds, newest first", "B8", "B9"], formulaRows);
+  table(["block", "seconds, newest first", "B9", "B10"], formulaRows);
 
   console.log("\n== Describe a fund: the sidebar page and the report text");
   logFrom = state.log.length;
@@ -3039,11 +3144,50 @@ function main() {
   const wordy = reportTexts.filter((text) => jargon.test(text));
   check(wordy.length === 0, `no text of the report holds an API word (${wordy.join(" | ")})`);
   const spill = report.cell(SPILL_CELL);
-  const unseenAt = spill.indexOf(`HSTACK("","${UNSEEN_TITLE}")`);
-  check(
-    unseenAt > 0 && unseenAt < spill.indexOf('HSTACK("","Not stocks")'),
-    `the section ${UNSEEN_TITLE} comes above Not stocks`,
+  const stockWords = reportTexts.filter(
+    (text) => /\bstocks?\b/i.test(text) && text !== '"stock"' && text !== '"Bonds of companies whose stock you hold"',
   );
+  check(
+    stockWords.length === 0,
+    `each label says security or securities, not stock, except the group of bonds (${stockWords.join(" | ")})`,
+  );
+  check(
+    report.cell(DISCLAIMER_CELL) === "This report is not investment advice." &&
+      report.cell(SUBTITLE_CELL) === "Your securities by company, with a look inside each fund.",
+    `${DISCLAIMER_CELL} holds the disclaimer, and ${SUBTITLE_CELL} holds the subtitle`,
+  );
+  const order = [
+    '"Your holdings",',
+    '{"Holding","Ticker","Accounts","Value","% of portfolio"},',
+    "\n yours,\n",
+    '"A commodity trust or a crypto trust, such as GLD or IBIT, counts as one security.",',
+    'HSTACK({"Rank","Company","Ticker","Value","% of portfolio","","Direct"},TRANSPOSE(f)),',
+    "top,rest,",
+    'HSTACK("","Fund overlap"),',
+    `HSTACK("","${UNSEEN_TITLE}"),`,
+    'HSTACK("","Other holdings"),',
+    'HSTACK("","Total of all lines",',
+  ];
+  const orderAt = order.map((text) => spill.lastIndexOf(text));
+  check(
+    orderAt.every((at, n) => at > 0 && (n === 0 || at > orderAt[n - 1])),
+    "the spill holds Your holdings, the note on trusts, the company table, Fund overlap, " +
+      `${UNSEEN_TITLE}, Other holdings, and the total, in this order (${orderAt.join(", ")})`,
+  );
+  for (const text of [
+    'hv,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Value"))),',
+    'fk,FILTER(ARRAYFORMULA(LEFT(IF(ys<>"",ys,yd),64)),yok)',
+    "yi,MAP(yu,LAMBDA(k,XMATCH(TRUE,ARRAYFORMULA(EXACT(fk,k))))),",
+    "yc,MAP(yu,LAMBDA(k,SUMPRODUCT(EXACT(fk,k)*1))),",
+    "yw,MAP(yu,LAMBDA(k,SUMPRODUCT(EXACT(fk,k)*fv))),",
+    'SORT(HSTACK(yn,yt,yc,yw,ARRAYFORMULA(IFERROR(yw/tot,""))),4,FALSE)',
+    'HSTACK("Total","","",tot,IFERROR(tot/tot,""))',
+  ]) {
+    check(
+      spill.includes(text),
+      `the section Your holdings computes ${text.slice(0, 48)} from the Holdings tab, so it changes with no refresh`,
+    );
+  }
   for (const text of [
     `"${ADD_MIX_NOTE}"`,
     "uu>=0.01",
@@ -3056,10 +3200,10 @@ function main() {
   }
   const note = report.cell(NOTE_CELL);
   check(
-    report.cell("A2") === "Status" &&
+    report.cell("A3") === "Status" &&
       note.includes('n&IF(n=1," holding ("," holdings (")') &&
-      note.includes('" of your portfolio) "&IF(n=1,"is a fund","are funds")&" we can\'t see inside."'),
-    `${NOTE_CELL}, under the status cell, counts the holdings that we can't see inside and their share`,
+      note.includes('" of your portfolio) "&IF(n=1,"is a fund","are funds")&" not looked through."'),
+    `${NOTE_CELL}, under the status cell, counts the funds not looked through and their share`,
   );
 
   console.log("\n== Describe a fund: the sidebar data and the ticker check");
@@ -3068,7 +3212,7 @@ function main() {
   let data = context.mixSidebarData();
   check(
     JSON.stringify(data.holdings.map((h) => h.key)) === JSON.stringify([BOND, PLAN_FUND]),
-    `the drop-down lists the holdings that we can't see inside (${data.holdings.map((h) => h.key).join(", ")})`,
+    `the drop-down lists the holdings that are not looked through (${data.holdings.map((h) => h.key).join(", ")})`,
   );
   check(
     data.holdings.every((h) => h.mix === null) && data.holdings[0].label === `${BOND} – Example Treasury bond`,
@@ -3517,8 +3661,8 @@ function main() {
 
   console.log("\n== Run 12: tabs with an older layout version are replaced and keep both typed values");
   keptExposure.grid[2][1] = layoutVersion - 1;
-  keptReport.grid[21][1] = 0.03;
-  keptReport.grid[22][1] = 0.25;
+  keptReport.grid[22][1] = 0.03;
+  keptReport.grid[23][1] = 0.25;
   runStarts.length = 0;
   logFrom = state.log.length;
   pause(2);
@@ -3554,7 +3698,7 @@ function main() {
   checkRecorded("run 13", runThirteen);
 
   console.log("\n== Run 14: the hidden tab is absent, so the script replaces the report tab too");
-  book.tab(REPORT_TAB).grid[21][1] = 0.04;
+  book.tab(REPORT_TAB).grid[22][1] = 0.04;
   book.sheets.splice(book.sheets.indexOf(book.tab(EXPOSURE_TAB)), 1);
   runStarts.length = 0;
   logFrom = state.log.length;

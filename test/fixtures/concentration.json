@@ -1,13 +1,17 @@
 {
   "tab": "Concentration",
-  "note": "The concentration report. It reads the hidden tab Concentration.Exposure and the Holdings tab. Every cell is a label, a formula, the threshold cell B22, or the overlap minimum cell B23. B3 counts the holdings that we can't see inside. B8 and B9 read the run-time block A15:B24 of Concentration.Exposure. B11 holds the coverage label of the measures. The company table, the section of the funds that we can't see inside, the block of the holdings that are not stocks, the total, and the fund overlap list are one spill from A26.",
+  "note": "The concentration report. It reads the hidden tab Concentration.Exposure and the Holdings tab. Every cell is a label, a formula, the threshold cell B23, or the overlap minimum cell B24. B1 holds the disclaimer. B4 counts the holdings that are funds not looked through. B9 and B10 read the run-time block A15:B24 of Concentration.Exposure. B12 holds the coverage label of the measures. The section Your holdings, the header of the company table, the company table, the fund overlap list, the section of the funds not looked through, the section of the other holdings, and the total are one spill from A26.",
   "cells": [
     {
       "range": "A1:B1",
-      "values": [["Concentration", "Your stock exposure by company, with a look inside each fund."]]
+      "values": [["Concentration", "This report is not investment advice."]]
     },
     {
-      "range": "D1",
+      "range": "B2",
+      "values": [["Your securities by company, with a look inside each fund."]]
+    },
+    {
+      "range": "D2",
       "values": [
         [
           "A fund that holds other funds uses the newest report of each held fund. The date of a held report can differ from the date in this table."
@@ -15,12 +19,12 @@
       ]
     },
     {
-      "range": "A2:B9",
+      "range": "A3:B10",
       "values": [
         ["Status", "='Concentration.Exposure'!B1"],
         [
           "",
-          "=LET(uu,'Concentration.Exposure'!$AC$5:$AC,\nn,COUNTIF(uu,\">1E-12\"),s,SUM(uu),\nIF(n=0,\"\",n&IF(n=1,\" holding (\",\" holdings (\")&IF(s<0.01,\"less than 1%\",TEXT(s,\"0%\"))&\" of your portfolio) \"&IF(n=1,\"is a fund\",\"are funds\")&\" we can't see inside.\"))"
+          "=LET(uu,'Concentration.Exposure'!$AC$5:$AC,\nn,COUNTIF(uu,\">1E-12\"),s,SUM(uu),\nIF(n=0,\"\",n&IF(n=1,\" holding (\",\" holdings (\")&IF(s<0.01,\"less than 1%\",TEXT(s,\"0%\"))&\" of your portfolio) \"&IF(n=1,\"is a fund\",\"are funds\")&\" not looked through.\"))"
         ],
         ["Last run", "='Concentration.Exposure'!B2"],
         [
@@ -37,11 +41,11 @@
       ]
     },
     {
-      "range": "D2:H2",
+      "range": "D3:H3",
       "values": [["Fund looked through", "Report date", "Holdings", "Weight", "Covered"]]
     },
     {
-      "range": "D3",
+      "range": "D4",
       "values": [
         [
           "=LET(r,IFNA(FILTER('Concentration.Exposure'!$D$5:$N,'Concentration.Exposure'!$D$5:$D<>\"\"),\"\"),\nIF(INDEX(r,1,1)=\"\",\"No fund looked through.\",\nHSTACK(ARRAYFORMULA(IF(CHOOSECOLS(r,11)=\"\",CHOOSECOLS(r,1),CHOOSECOLS(r,1)&\" › \"&CHOOSECOLS(r,2))),\nCHOOSECOLS(r,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6)))))"
@@ -49,89 +53,78 @@
       ]
     },
     {
-      "range": "A11:B16",
+      "range": "A12:B17",
       "values": [
         [
-          "Your stocks alone",
+          "Your securities alone",
           "=IF(ISNUMBER('Concentration.Exposure'!B13),\"These measures cover \"&TEXT(1-'Concentration.Exposure'!B13,\"0.0%\")&\" of your portfolio.\",\"\")"
         ],
         [
-          "Stocks, share of your portfolio",
+          "Securities, share of your portfolio",
           "=IF(ISNUMBER('Concentration.Exposure'!B27),'Concentration.Exposure'!B27,\"\")"
         ],
         [
-          "Top 10 stocks, share of your stocks",
+          "Top 10 securities, share of your securities",
           "=IF(ISNUMBER('Concentration.Exposure'!B29),'Concentration.Exposure'!B29,\"\")"
         ],
         [
-          "HHI of your stocks, 0 to 10,000",
+          "HHI of your securities, 0 to 10,000",
           "=IF(ISNUMBER('Concentration.Exposure'!B30),'Concentration.Exposure'!B30,\"\")"
         ],
-        ["Effective number of stocks", "=IF(ISNUMBER('Concentration.Exposure'!B31),'Concentration.Exposure'!B31,\"\")"],
         [
-          "=IF(AND(ISNUMBER('Concentration.Exposure'!B5),NOT(ISNUMBER('Concentration.Exposure'!B27))),\"Your portfolio holds no stock.\",\"\")",
+          "Effective number of securities",
+          "=IF(ISNUMBER('Concentration.Exposure'!B31),'Concentration.Exposure'!B31,\"\")"
+        ],
+        [
+          "=IF(AND(ISNUMBER('Concentration.Exposure'!B5),NOT(ISNUMBER('Concentration.Exposure'!B27))),\"Your portfolio holds no securities.\",\"\")",
           ""
         ]
       ]
     },
     {
-      "range": "A17:C20",
+      "range": "A18:C21",
       "values": [
         ["Composition", "Value", "% of portfolio"],
         [
-          "=\"Stocks at \"&TEXT($B$22,\"0.00%\")&\" or more\"",
-          "=IF(ISNUMBER($B$5),C18*$B$5,\"\")",
-          "=SUMIFS('Concentration.Exposure'!$AX$5:$AX,'Concentration.Exposure'!$AY$5:$AY,\"stock\",'Concentration.Exposure'!$AX$5:$AX,\">=\"&$B$22)"
+          "=\"Securities at \"&TEXT($B$23,\"0.00%\")&\" or more\"",
+          "=IF(ISNUMBER($B$6),C19*$B$6,\"\")",
+          "=SUMIFS('Concentration.Exposure'!$AX$5:$AX,'Concentration.Exposure'!$AY$5:$AY,\"stock\",'Concentration.Exposure'!$AX$5:$AX,\">=\"&$B$23)"
         ],
         [
-          "=\"Stocks under \"&TEXT($B$22,\"0.00%\")",
-          "=IF(ISNUMBER($B$5),C19*$B$5,\"\")",
-          "=SUMIFS('Concentration.Exposure'!$AX$5:$AX,'Concentration.Exposure'!$AY$5:$AY,\"stock\",'Concentration.Exposure'!$AX$5:$AX,\"<\"&$B$22)"
+          "=\"Securities under \"&TEXT($B$23,\"0.00%\")",
+          "=IF(ISNUMBER($B$6),C20*$B$6,\"\")",
+          "=SUMIFS('Concentration.Exposure'!$AX$5:$AX,'Concentration.Exposure'!$AY$5:$AY,\"stock\",'Concentration.Exposure'!$AX$5:$AX,\"<\"&$B$23)"
         ],
         [
-          "Not stocks",
-          "=IF(ISNUMBER($B$5),C20*$B$5,\"\")",
+          "Other holdings",
+          "=IF(ISNUMBER($B$6),C21*$B$6,\"\")",
           "=SUMIFS('Concentration.Exposure'!$AW$5:$AW,'Concentration.Exposure'!$AY$5:$AY,\"other\")-SUMIFS('Concentration.Exposure'!$AX$5:$AX,'Concentration.Exposure'!$AY$5:$AY,\"other\")"
         ]
       ]
     },
     {
-      "range": "A22:C23",
+      "range": "A23:C24",
       "values": [
-        ["Threshold", 0.01, "Type a percent. Each company whose stock is at or above it gets a row."],
+        ["Threshold", 0.01, "Type a percent. Each company whose securities are at or above it gets a row."],
         [
           "Overlap minimum",
           0.1,
-          "Type a percent. The fund overlap list under the tables shows each pair of funds at or above it."
+          "Type a percent. The fund overlap list under the company table shows each pair of funds at or above it."
         ]
-      ]
-    },
-    {
-      "range": "A24",
-      "values": [["A commodity trust or a crypto trust, such as GLD or IBIT, counts as one stock."]]
-    },
-    {
-      "range": "A25:G25",
-      "values": [["Rank", "Company", "Ticker", "Value", "% of portfolio", "", "Direct"]]
-    },
-    {
-      "range": "H25",
-      "values": [
-        ["=IFNA(TRANSPOSE(FILTER('Concentration.Exposure'!$AE$5:$AE,'Concentration.Exposure'!$AE$5:$AE<>\"\")),\"\")"]
       ]
     },
     {
       "range": "A26",
       "values": [
         [
-          "=LET(LN,'Concentration.Exposure'!$AS$5:$AS,LT,'Concentration.Exposure'!$AT$5:$AT,LW,'Concentration.Exposure'!$AW$5:$AW,LX,'Concentration.Exposure'!$AX$5:$AX,LP,'Concentration.Exposure'!$AY$5:$AY,\nLS,'Concentration.Exposure'!$BA$5:$IR,LH,'Concentration.Exposure'!$BA$4:$IR$4,\nf,IFNA(FILTER('Concentration.Exposure'!$AE$5:$AE,'Concentration.Exposure'!$AE$5:$AE<>\"\"),\"\"),\nhh,Holdings!$1:$1,\nhs,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),\"Symbol\"))),\nhd,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),\"Description\"))),\ntot,IF(ISNUMBER($B$5),$B$5,NA()),thr,$B$22,\nMI,'Concentration.Exposure'!$U$5:$U,MW,'Concentration.Exposure'!$V$5:$V,ME,'Concentration.Exposure'!$W$5:$W,\nMT,'Concentration.Exposure'!$X$5:$X,MP,'Concentration.Exposure'!$Y$5:$Y,MS,'Concentration.Exposure'!$Z$5:$Z,\nhn,LAMBDA(n,IF(ISNA(hs)+ISNA(hd),n,IFNA(XLOOKUP(n,INDIRECT(\"Holdings!C\"&hs,FALSE),INDIRECT(\"Holdings!C\"&hd,FALSE)),n))),\npw,ARRAYFORMULA(IF(LP=\"stock\",LX,IF(LP=\"other\",LW-LX,0))),\ndw,'Concentration.Exposure'!$AZ$5:$AZ,\nsel,ARRAYFORMULA((LP=\"stock\")*ISNUMBER(LX)*(LX>=thr)),\ntop,IF(SUM(sel)=0,HSTACK(\"\",\"No company at or above the threshold.\"),\n LET(blk,SORT(HSTACK(FILTER(LN,sel),FILTER(LT,sel),FILTER(LX,sel),FILTER(dw,sel),FILTER(LS,sel)),3,FALSE),\n  sw,CHOOSECOLS(blk,3),mx,MAX(sw),\n  fx,MAKEARRAY(ROWS(sw),ROWS(f),LAMBDA(i,j,IFERROR(N(INDEX(blk,i,4+XMATCH(INDEX(f,j),LH))),0))),\n  HSTACK(SEQUENCE(ROWS(sw)),CHOOSECOLS(blk,1,2),ARRAYFORMULA(sw*tot),sw,\n   MAP(sw,LAMBDA(x,SPARKLINE(x,{\"charttype\",\"bar\";\"max\",mx;\"color1\",\"#2a78d6\"}))),\n   ARRAYFORMULA(ROUND(CHOOSECOLS(blk,4),12)),fx))),\nrsel,ARRAYFORMULA((LP=\"stock\")*ISNUMBER(LX)*(LX<thr)),\nrw,SUMIFS(LX,LP,\"stock\",LX,\"<\"&thr),\nrc,COUNTIFS(LP,\"stock\",LX,\"<\"&thr,LX,\"<>0\"),\nrf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,\"stock\",LX,\"<\"&thr),0))),\nrest,HSTACK(\"\",\"Stocks under \"&TEXT(thr,\"0.00%\")&\" (\"&TEXT(rc,\"#,##0\")&\")\",\"\",rw*tot,rw,\"\",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),\nuid,IFNA(FILTER('Concentration.Exposure'!$AB$5:$AB,'Concentration.Exposure'!$AB$5:$AB<>\"\"),\"\"),\nuu,IFNA(FILTER('Concentration.Exposure'!$AC$5:$AC,'Concentration.Exposure'!$AB$5:$AB<>\"\"),0),\ncx,{\"\",\"\",\"\",\"\",\"\",\"\",\"x\"},\ncu,LET(q,IFNA(FILTER(uid,uu>=0.01),\"\"),\n IF(INDEX(q,1,1)=\"\",cx,\n  LET(qw,IFNA(FILTER(uu,uu>=0.01),0),qe,MAKEARRAY(ROWS(q),1,LAMBDA(i,j,\"\")),\n   SORT(HSTACK(MAP(q,LAMBDA(v,hn(v))),qe,ARRAYFORMULA(qw*tot),qw,MAKEARRAY(ROWS(q),1,LAMBDA(i,j,\"Add its fund mix: Concentration › Describe a fund\")),qe,qe),4,FALSE)))),\ncsn,SUM(ARRAYFORMULA(IF((uu>1E-12)*(uu<0.01),1,0))),\ncsw,SUM(ARRAYFORMULA(IF(uu<0.01,uu,0))),\ncs,IF(csn=0,cx,HSTACK(\"Holdings under 1% (\"&csn&\")\",\"\",csw*tot,csw,\"Add its fund mix: Concentration › Describe a fund\",\"\",\"\")),\ncdn,SUM(ARRAYFORMULA(IF(MI<>\"\",1,0))),\ncd,IF(cdn=0,cx,\n LET(ki,IFNA(FILTER(MI,MI<>\"\"),\"\"),kw,IFNA(FILTER(MW,MI<>\"\"),0),ke,IFNA(FILTER(ME,MI<>\"\"),0),\n  kt,IFNA(FILTER(MT,MI<>\"\"),\"\"),kp,IFNA(FILTER(MP,MI<>\"\"),0),ks,IFNA(FILTER(MS,MI<>\"\"),FALSE),\n  kn,MAP(ke,LAMBDA(d,\"Mix entered \"&TEXT(d,\"mmmm yyyy\")&IF(TODAY()-d>182,\" — check the fact sheet\",\"\"))),\n  kr,HSTACK(MAP(ki,LAMBDA(v,hn(v))),ARRAYFORMULA(kt&IF(ks,\" (substitute)\",\"\")),ARRAYFORMULA(kw*kp*tot),ARRAYFORMULA(kw*kp),kn,ki,\n   MAKEARRAY(ROWS(ki),1,LAMBDA(i,j,0))),\n  ku,UNIQUE(ki),\n  kv,MAP(ku,LAMBDA(v,XLOOKUP(v,ki,kw)*(1-SUM(IFNA(FILTER(kp,ki=v),0))))),\n  ko,HSTACK(MAP(ku,LAMBDA(v,hn(v))),MAKEARRAY(ROWS(ku),1,LAMBDA(i,j,\"Not described\")),ARRAYFORMULA(kv*tot),kv,\n   MAP(ku,LAMBDA(v,XLOOKUP(v,ki,kn))),ku,MAKEARRAY(ROWS(ku),1,LAMBDA(i,j,1))),\n  SORT(VSTACK(kr,IFNA(FILTER(ko,kv>1E-9),cx)),6,TRUE,7,TRUE))),\ncv,VSTACK(cu,cs,cd),\ncan,IFNA(FILTER(CHOOSECOLS(cv,1,2,3,4,5),CHOOSECOLS(cv,7)<>\"x\"),{\"We can see inside each of your holdings.\",\"\",\"\",\"\",\"\"}),\ncb,MAKEARRAY(ROWS(can),1,LAMBDA(i,j,\"\")),\nkeep,ARRAYFORMULA(ISNUMBER('Concentration.Exposure'!$AJ$5:$AJ)),\nnown,SUM(keep),\non,FILTER('Concentration.Exposure'!$AH$5:$AH,keep),ok,FILTER('Concentration.Exposure'!$AG$5:$AG,keep),oc,FILTER('Concentration.Exposure'!$AI$5:$AI,keep),\now,FILTER('Concentration.Exposure'!$AJ$5:$AJ,keep),came,FILTER('Concentration.Exposure'!$AK$5:$AK,keep),\noname,IF(ISNA(hs)+ISNA(hd),on,\n LET(sc,INDIRECT(\"Holdings!C\"&hs,FALSE),sy,ARRAYFORMULA(IF(ROW(sc)=1,\"\",sc)),de,INDIRECT(\"Holdings!C\"&hd,FALSE),\n  MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,sy,de),n))))),\nkind,MAP(ok,oc,on,LAMBDA(k,c,n,IF(LEFT(k,9)=\"residual:\",\"not looked through\",IF(RIGHT(n,16)=\" (not described)\",\"not described\",\n SWITCH(c,\"fund\",\"fund, no holdings data\",\"unknown\",\"not in the SEC data\",c))))),\nownRows,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),\ngrp,ARRAYFORMULA(ISNUMBER('Concentration.Exposure'!$AN$5:$AN)),\ncls,FILTER('Concentration.Exposure'!$AM$5:$AM,grp),\ngw,FILTER('Concentration.Exposure'!$AN$5:$AN,grp),\ngn,FILTER('Concentration.Exposure'!$AO$5:$AO,grp),\ngl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,\"stock\",\"Bonds and other securities of companies you hold as stock\",\"fund\",\"Funds held by your funds, not looked through\",\"cash\",\"Cash and money market funds inside funds\",\"derivative\",\"Derivatives inside funds\",\"treasury\",\"Treasury securities inside funds\",\"other\",\"Other holdings inside funds\",x&\" inside funds\")&\" (\"&TEXT(m,\"#,##0\")&\")\")),\ngk,MAP(cls,LAMBDA(x,SWITCH(x,\"stock\",\"bond or other security\",\"fund\",\"fund, not looked through\",x))),\ngf,FILTER('Concentration.Exposure'!$AP$5:$AP,grp),\ngrpAll,HSTACK(gl,gk,ARRAYFORMULA(gw*tot),gw,gf),\nbig,ARRAYFORMULA(IF((cls=\"stock\")+(cls=\"fund\")>0,1,IF(ISNUMBER(gw*tot),IF(ABS(gw*tot)>=100,1,0),1))),\nsm,ARRAYFORMULA(1-big),\nng,IF(SUM(grp)=0,0,SUM(big)),\nnsm,IF(SUM(grp)=0,0,SUM(sm)),\nsmallRow,HSTACK(\"Other small holdings inside funds (\"&TEXT(SUM(FILTER(gn,sm)),\"#,##0\")&\")\",\n TEXTJOIN(\", \",TRUE,FILTER(gk,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),\n IFERROR(TEXTJOIN(\", \",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(\",\",TRUE,FILTER(gf,sm)),\",\")))))),\"\")),\nmain,IF(nown=0,FILTER(grpAll,big),IF(ng=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),\nnis,IF(nown+ng=0,IF(nsm=0,\"No holding other than stocks.\",smallRow),\n IF(nsm=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),\nblank,MAKEARRAY(ROWS(nis),1,LAMBDA(i,j,\"\")),\npa,'Concentration.Exposure'!$P$5:$P,pb,'Concentration.Exposure'!$Q$5:$Q,po,'Concentration.Exposure'!$R$5:$R,pn,'Concentration.Exposure'!$S$5:$S,\nfw,'Concentration.Exposure'!$I$5:$I,\npwt,LAMBDA(v,IFNA(XLOOKUP(v,MI,MW),XLOOKUP(v,'Concentration.Exposure'!$D$5:$D,fw,\"\"))),\npsel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$23)),\nplist,IF(SUM(psel)=0,HSTACK(\"\",\"No pair of funds is at or above the overlap minimum.\"),\n LET(qa,FILTER(pa,psel),qb,FILTER(pb,psel),gap,MAKEARRAY(ROWS(qa),1,LAMBDA(i,j,\"\")),\n  HSTACK(gap,qa,qb,gap,FILTER(po,psel),FILTER(pn,psel),\n   MAP(qa,LAMBDA(v,pwt(v))),MAP(qb,LAMBDA(v,pwt(v)))))),\nIFNA(VSTACK(top,rest,\"\",\n HSTACK(\"\",\"Funds we can't see inside\"),\n {\"\",\"Holding\",\"Fund in the mix\",\"Value\",\"% of portfolio\",\"Note\"},\n HSTACK(cb,can),\n \"\",\n HSTACK(\"\",\"Not stocks\"),\n {\"\",\"Line\",\"Kind\",\"Value\",\"% of portfolio\",\"Came from\"},\n HSTACK(blank,nis),\n \"\",\n HSTACK(\"\",\"Total of all lines\",\"\",SUM(pw)*tot,SUM(pw)),\n HSTACK(\"\",\"The positions in a fund report can add up to more than 100% of the net assets of the fund. This total can then be above 100%.\"),\n \"\",\n HSTACK(\"\",\"Fund overlap\"),\n HSTACK(\"\",\"Overlap is the part of the two funds that sits in the same stocks.\"),\n {\"\",\"Fund 1\",\"Fund 2\",\"\",\"Overlap\",\"Shared stocks\",\"Fund 1 weight\",\"Fund 2 weight\"},\n plist),\"\"))"
+          "=LET(LN,'Concentration.Exposure'!$AS$5:$AS,LT,'Concentration.Exposure'!$AT$5:$AT,LW,'Concentration.Exposure'!$AW$5:$AW,LX,'Concentration.Exposure'!$AX$5:$AX,LP,'Concentration.Exposure'!$AY$5:$AY,\nLS,'Concentration.Exposure'!$BA$5:$IR,LH,'Concentration.Exposure'!$BA$4:$IR$4,\nf,IFNA(FILTER('Concentration.Exposure'!$AE$5:$AE,'Concentration.Exposure'!$AE$5:$AE<>\"\"),\"\"),\nhh,Holdings!$1:$1,\nhs,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),\"Symbol\"))),\nhd,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),\"Description\"))),\nhv,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),\"Value\"))),\ntot,IF(ISNUMBER($B$6),$B$6,NA()),thr,$B$23,\nyours,IF(ISNA(hs)+ISNA(hd)+ISNA(hv)>0,\"The Holdings tab needs the columns Symbol, Description, and Value.\",\n LET(yv,INDIRECT(\"Holdings!C\"&hv,FALSE),\n  ys,ARRAYFORMULA(TRIM(INDIRECT(\"Holdings!C\"&hs,FALSE))),yd,ARRAYFORMULA(TRIM(INDIRECT(\"Holdings!C\"&hd,FALSE))),\n  yok,ARRAYFORMULA(ISNUMBER(yv)*1),\n  IF(SUM(yok)=0,\"No holding on the Holdings tab has a value.\",\n   LET(fk,FILTER(ARRAYFORMULA(LEFT(IF(ys<>\"\",ys,yd),64)),yok),fs,FILTER(ys,yok),fd,FILTER(yd,yok),fv,FILTER(yv,yok),\n    yu,UNIQUE(fk),\n    yi,MAP(yu,LAMBDA(k,XMATCH(TRUE,ARRAYFORMULA(EXACT(fk,k))))),\n    yn,MAP(yu,yi,LAMBDA(k,i,IF(INDEX(fd,i)<>\"\",INDEX(fd,i),IF(k<>\"\",k,\"No symbol or description\")))),\n    yt,MAP(yi,LAMBDA(i,INDEX(fs,i))),\n    yc,MAP(yu,LAMBDA(k,SUMPRODUCT(EXACT(fk,k)*1))),\n    yw,MAP(yu,LAMBDA(k,SUMPRODUCT(EXACT(fk,k)*fv))),\n    VSTACK(SORT(HSTACK(yn,yt,yc,yw,ARRAYFORMULA(IFERROR(yw/tot,\"\"))),4,FALSE),\n     HSTACK(\"Total\",\"\",\"\",tot,IFERROR(tot/tot,\"\"))))))),\nMI,'Concentration.Exposure'!$U$5:$U,MW,'Concentration.Exposure'!$V$5:$V,ME,'Concentration.Exposure'!$W$5:$W,\nMT,'Concentration.Exposure'!$X$5:$X,MP,'Concentration.Exposure'!$Y$5:$Y,MS,'Concentration.Exposure'!$Z$5:$Z,\nhn,LAMBDA(n,IF(ISNA(hs)+ISNA(hd),n,IFNA(XLOOKUP(n,INDIRECT(\"Holdings!C\"&hs,FALSE),INDIRECT(\"Holdings!C\"&hd,FALSE)),n))),\npw,ARRAYFORMULA(IF(LP=\"stock\",LX,IF(LP=\"other\",LW-LX,0))),\ndw,'Concentration.Exposure'!$AZ$5:$AZ,\nsel,ARRAYFORMULA((LP=\"stock\")*ISNUMBER(LX)*(LX>=thr)),\ntop,IF(SUM(sel)=0,HSTACK(\"\",\"No company at or above the threshold.\"),\n LET(blk,SORT(HSTACK(FILTER(LN,sel),FILTER(LT,sel),FILTER(LX,sel),FILTER(dw,sel),FILTER(LS,sel)),3,FALSE),\n  sw,CHOOSECOLS(blk,3),mx,MAX(sw),\n  fx,MAKEARRAY(ROWS(sw),ROWS(f),LAMBDA(i,j,IFERROR(N(INDEX(blk,i,4+XMATCH(INDEX(f,j),LH))),0))),\n  HSTACK(SEQUENCE(ROWS(sw)),CHOOSECOLS(blk,1,2),ARRAYFORMULA(sw*tot),sw,\n   MAP(sw,LAMBDA(x,SPARKLINE(x,{\"charttype\",\"bar\";\"max\",mx;\"color1\",\"#2a78d6\"}))),\n   ARRAYFORMULA(ROUND(CHOOSECOLS(blk,4),12)),fx))),\nrsel,ARRAYFORMULA((LP=\"stock\")*ISNUMBER(LX)*(LX<thr)),\nrw,SUMIFS(LX,LP,\"stock\",LX,\"<\"&thr),\nrc,COUNTIFS(LP,\"stock\",LX,\"<\"&thr,LX,\"<>0\"),\nrf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,\"stock\",LX,\"<\"&thr),0))),\nrest,HSTACK(\"\",\"Securities under \"&TEXT(thr,\"0.00%\")&\" (\"&TEXT(rc,\"#,##0\")&\")\",\"\",rw*tot,rw,\"\",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),\nuid,IFNA(FILTER('Concentration.Exposure'!$AB$5:$AB,'Concentration.Exposure'!$AB$5:$AB<>\"\"),\"\"),\nuu,IFNA(FILTER('Concentration.Exposure'!$AC$5:$AC,'Concentration.Exposure'!$AB$5:$AB<>\"\"),0),\ncx,{\"\",\"\",\"\",\"\",\"\",\"\",\"x\"},\ncu,LET(q,IFNA(FILTER(uid,uu>=0.01),\"\"),\n IF(INDEX(q,1,1)=\"\",cx,\n  LET(qw,IFNA(FILTER(uu,uu>=0.01),0),qe,MAKEARRAY(ROWS(q),1,LAMBDA(i,j,\"\")),\n   SORT(HSTACK(MAP(q,LAMBDA(v,hn(v))),qe,ARRAYFORMULA(qw*tot),qw,MAKEARRAY(ROWS(q),1,LAMBDA(i,j,\"Add its fund mix: Concentration › Describe a fund\")),qe,qe),4,FALSE)))),\ncsn,SUM(ARRAYFORMULA(IF((uu>1E-12)*(uu<0.01),1,0))),\ncsw,SUM(ARRAYFORMULA(IF(uu<0.01,uu,0))),\ncs,IF(csn=0,cx,HSTACK(\"Holdings under 1% (\"&csn&\")\",\"\",csw*tot,csw,\"Add its fund mix: Concentration › Describe a fund\",\"\",\"\")),\ncdn,SUM(ARRAYFORMULA(IF(MI<>\"\",1,0))),\ncd,IF(cdn=0,cx,\n LET(ki,IFNA(FILTER(MI,MI<>\"\"),\"\"),kw,IFNA(FILTER(MW,MI<>\"\"),0),ke,IFNA(FILTER(ME,MI<>\"\"),0),\n  kt,IFNA(FILTER(MT,MI<>\"\"),\"\"),kp,IFNA(FILTER(MP,MI<>\"\"),0),ks,IFNA(FILTER(MS,MI<>\"\"),FALSE),\n  kn,MAP(ke,LAMBDA(d,\"Mix entered \"&TEXT(d,\"mmmm yyyy\")&IF(TODAY()-d>182,\" — check the fact sheet\",\"\"))),\n  kr,HSTACK(MAP(ki,LAMBDA(v,hn(v))),ARRAYFORMULA(kt&IF(ks,\" (substitute)\",\"\")),ARRAYFORMULA(kw*kp*tot),ARRAYFORMULA(kw*kp),kn,ki,\n   MAKEARRAY(ROWS(ki),1,LAMBDA(i,j,0))),\n  ku,UNIQUE(ki),\n  kv,MAP(ku,LAMBDA(v,XLOOKUP(v,ki,kw)*(1-SUM(IFNA(FILTER(kp,ki=v),0))))),\n  ko,HSTACK(MAP(ku,LAMBDA(v,hn(v))),MAKEARRAY(ROWS(ku),1,LAMBDA(i,j,\"Not described\")),ARRAYFORMULA(kv*tot),kv,\n   MAP(ku,LAMBDA(v,XLOOKUP(v,ki,kn))),ku,MAKEARRAY(ROWS(ku),1,LAMBDA(i,j,1))),\n  SORT(VSTACK(kr,IFNA(FILTER(ko,kv>1E-9),cx)),6,TRUE,7,TRUE))),\ncv,VSTACK(cu,cs,cd),\ncan,IFNA(FILTER(CHOOSECOLS(cv,1,2,3,4,5),CHOOSECOLS(cv,7)<>\"x\"),{\"Every fund is looked through.\",\"\",\"\",\"\",\"\"}),\ncb,MAKEARRAY(ROWS(can),1,LAMBDA(i,j,\"\")),\nkeep,ARRAYFORMULA(ISNUMBER('Concentration.Exposure'!$AJ$5:$AJ)*1),\nnown,SUM(keep),\non,FILTER('Concentration.Exposure'!$AH$5:$AH,keep),ok,FILTER('Concentration.Exposure'!$AG$5:$AG,keep),oc,FILTER('Concentration.Exposure'!$AI$5:$AI,keep),\now,FILTER('Concentration.Exposure'!$AJ$5:$AJ,keep),came,FILTER('Concentration.Exposure'!$AK$5:$AK,keep),\noname,IF(ISNA(hs)+ISNA(hd),on,\n LET(sc,INDIRECT(\"Holdings!C\"&hs,FALSE),sy,ARRAYFORMULA(IF(ROW(sc)=1,\"\",sc)),de,INDIRECT(\"Holdings!C\"&hd,FALSE),\n  MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,sy,de),n))))),\nkind,MAP(ok,oc,on,LAMBDA(k,c,n,IF(LEFT(k,9)=\"residual:\",\"not looked through\",IF(RIGHT(n,16)=\" (not described)\",\"not described\",\n SWITCH(c,\"fund\",\"fund, no holdings data\",\"unknown\",\"not in the SEC data\",c))))),\nownRows,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),\ngrp,ARRAYFORMULA(ISNUMBER('Concentration.Exposure'!$AN$5:$AN)*1),\ncls,FILTER('Concentration.Exposure'!$AM$5:$AM,grp),\ngw,FILTER('Concentration.Exposure'!$AN$5:$AN,grp),\ngn,FILTER('Concentration.Exposure'!$AO$5:$AO,grp),\ngl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,\"stock\",\"Bonds of companies whose stock you hold\",\"fund\",\"Funds held by your funds, not looked through\",\"cash\",\"Cash and money market funds inside funds\",\"derivative\",\"Derivatives inside funds\",\"treasury\",\"Treasury securities inside funds\",\"other\",\"Other holdings inside funds\",x&\" inside funds\")&\" (\"&TEXT(m,\"#,##0\")&\")\")),\ngk,MAP(cls,LAMBDA(x,SWITCH(x,\"stock\",\"bond or other security\",\"fund\",\"fund, not looked through\",x))),\ngf,FILTER('Concentration.Exposure'!$AP$5:$AP,grp),\ngrpAll,HSTACK(gl,gk,ARRAYFORMULA(gw*tot),gw,gf),\nbig,ARRAYFORMULA(IF((cls=\"stock\")+(cls=\"fund\")>0,1,IF(ISNUMBER(gw*tot),IF(ABS(gw*tot)>=100,1,0),1))),\nsm,ARRAYFORMULA(1-big),\nng,IF(SUM(grp)=0,0,SUM(big)),\nnsm,IF(SUM(grp)=0,0,SUM(sm)),\nsmallRow,HSTACK(\"Other small holdings inside funds (\"&TEXT(SUM(FILTER(gn,sm)),\"#,##0\")&\")\",\n TEXTJOIN(\", \",TRUE,FILTER(gk,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),\n IFERROR(TEXTJOIN(\", \",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(\",\",TRUE,FILTER(gf,sm)),\",\")))))),\"\")),\nmain,IF(nown=0,FILTER(grpAll,big),IF(ng=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),\nnis,IF(nown+ng=0,IF(nsm=0,\"No holding other than securities.\",smallRow),\n IF(nsm=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),\nblank,MAKEARRAY(ROWS(nis),1,LAMBDA(i,j,\"\")),\npa,'Concentration.Exposure'!$P$5:$P,pb,'Concentration.Exposure'!$Q$5:$Q,po,'Concentration.Exposure'!$R$5:$R,pn,'Concentration.Exposure'!$S$5:$S,\nfw,'Concentration.Exposure'!$I$5:$I,\npwt,LAMBDA(v,IFNA(XLOOKUP(v,MI,MW),XLOOKUP(v,'Concentration.Exposure'!$D$5:$D,fw,\"\"))),\npsel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$24)),\nplist,IF(SUM(psel)=0,HSTACK(\"\",\"No pair of funds is at or above the overlap minimum.\"),\n LET(qa,FILTER(pa,psel),qb,FILTER(pb,psel),gap,MAKEARRAY(ROWS(qa),1,LAMBDA(i,j,\"\")),\n  HSTACK(gap,qa,qb,gap,FILTER(po,psel),FILTER(pn,psel),\n   MAP(qa,LAMBDA(v,pwt(v))),MAP(qb,LAMBDA(v,pwt(v)))))),\nIFNA(VSTACK(\"Your holdings\",\n {\"Holding\",\"Ticker\",\"Accounts\",\"Value\",\"% of portfolio\"},\n yours,\n \"\",\n \"A commodity trust or a crypto trust, such as GLD or IBIT, counts as one security.\",\n HSTACK({\"Rank\",\"Company\",\"Ticker\",\"Value\",\"% of portfolio\",\"\",\"Direct\"},TRANSPOSE(f)),\n top,rest,\"\",\n HSTACK(\"\",\"Fund overlap\"),\n HSTACK(\"\",\"Overlap is the part of the two funds that sits in the same securities.\"),\n {\"\",\"Fund 1\",\"Fund 2\",\"\",\"Overlap\",\"Shared securities\",\"Fund 1 weight\",\"Fund 2 weight\"},\n plist,\n \"\",\n HSTACK(\"\",\"Funds not looked through\"),\n {\"\",\"Holding\",\"Fund in the mix\",\"Value\",\"% of portfolio\",\"Note\"},\n HSTACK(cb,can),\n \"\",\n HSTACK(\"\",\"Other holdings\"),\n {\"\",\"Line\",\"Kind\",\"Value\",\"% of portfolio\",\"Came from\"},\n HSTACK(blank,nis),\n \"\",\n HSTACK(\"\",\"Total of all lines\",\"\",SUM(pw)*tot,SUM(pw)),\n HSTACK(\"\",\"The positions in a fund report can add up to more than 100% of the net assets of the fund. This total can then be above 100%.\")),\"\"))"
         ]
       ]
     }
   ],
   "format": {
     "reset": true,
-    "frozenRows": 1,
+    "frozenRows": 2,
     "columnWidths": {
       "A": 250,
       "B": 300,
@@ -148,127 +141,109 @@
         "fontSize": 16
       },
       {
-        "range": "B1",
+        "range": "B1:B2",
         "color": "#6b6962",
         "italic": true
       },
       {
-        "range": "D1",
+        "range": "D2",
         "color": "#6b6962",
         "italic": true
       },
       {
-        "range": "A2:A20",
+        "range": "A3:A21",
         "color": "#57554f"
       },
       {
-        "range": "B4",
+        "range": "B5",
         "numberFormat": "yyyy-mm-dd hh:mm"
       },
       {
-        "range": "B5",
+        "range": "B6",
         "numberFormat": "$#,##0",
         "bold": true
       },
       {
-        "range": "B6:B7",
+        "range": "B7:B8",
         "numberFormat": "0.00%"
       },
       {
-        "range": "B8:B9",
+        "range": "B9:B10",
         "numberFormat": "0.0\" s\""
       },
       {
-        "range": "B2:B9",
+        "range": "B3:B10",
         "align": "RIGHT"
       },
       {
-        "range": "B3",
+        "range": "B4",
         "align": "LEFT",
         "color": "#6b6962",
         "italic": true,
         "wrap": true
       },
       {
-        "range": "A11:B11",
+        "range": "A12:B12",
         "bold": true,
         "background": "#f7f6f1",
         "color": "#1d1c1a"
       },
       {
-        "range": "B11",
+        "range": "B12",
         "bold": false,
         "italic": true,
         "color": "#57554f"
       },
       {
-        "range": "B12:B13",
+        "range": "B13:B14",
         "numberFormat": "0.00%"
       },
       {
-        "range": "B14",
+        "range": "B15",
         "numberFormat": "#,##0"
       },
       {
-        "range": "B15",
+        "range": "B16",
         "numberFormat": "0.0"
       },
       {
-        "range": "A16",
+        "range": "A17",
         "color": "#6b6962",
         "italic": true
       },
       {
-        "range": "A17:C17",
+        "range": "A18:C18",
         "bold": true,
         "background": "#f7f6f1",
         "color": "#1d1c1a"
       },
       {
-        "range": "B17:C17",
+        "range": "B18:C18",
         "align": "RIGHT"
       },
       {
-        "range": "B18:B20",
+        "range": "B19:B21",
         "numberFormat": "$#,##0"
       },
       {
-        "range": "C18:C20",
+        "range": "C19:C21",
         "numberFormat": "0.00%"
       },
       {
-        "range": "A22:A23",
+        "range": "A23:A24",
         "bold": true
       },
       {
-        "range": "B22:B23",
+        "range": "B23:B24",
         "numberFormat": "0.00%",
         "bold": true,
         "background": "#fff4c7",
         "align": "RIGHT"
       },
       {
-        "range": "C22:C23",
+        "range": "C23:C24",
         "color": "#6b6962",
         "italic": true
-      },
-      {
-        "range": "A24",
-        "color": "#6b6962",
-        "italic": true
-      },
-      {
-        "range": "A25:Z25",
-        "bold": true,
-        "background": "#f7f6f1"
-      },
-      {
-        "range": "A25",
-        "align": "RIGHT"
-      },
-      {
-        "range": "D25:Z25",
-        "align": "RIGHT"
       },
       {
         "range": "A26:A",
@@ -276,11 +251,13 @@
       },
       {
         "range": "D26:D",
-        "numberFormat": "$#,##0"
+        "numberFormat": "$#,##0",
+        "align": "RIGHT"
       },
       {
         "range": "E26:E",
-        "numberFormat": "0.00%"
+        "numberFormat": "0.00%",
+        "align": "RIGHT"
       },
       {
         "range": "F26:F",
@@ -289,75 +266,76 @@
       },
       {
         "range": "G26:Z",
-        "numberFormat": "0.00%;-0.00%;\"\""
+        "numberFormat": "0.00%;-0.00%;\"\"",
+        "align": "RIGHT"
       },
       {
-        "range": "D2:H2",
+        "range": "D3:H3",
         "bold": true,
         "background": "#f7f6f1"
       },
       {
-        "range": "D3:D24",
+        "range": "D4:D25",
         "bold": true
       },
       {
-        "range": "E3:E24",
+        "range": "E4:E25",
         "numberFormat": "yyyy-mm-dd"
       },
       {
-        "range": "F3:F24",
+        "range": "F4:F25",
         "numberFormat": "#,##0"
       },
       {
-        "range": "G3:G24",
+        "range": "G4:G25",
         "numberFormat": "0.00%"
       },
       {
-        "range": "H3:H24",
+        "range": "H4:H25",
         "numberFormat": "0.0%"
       }
     ],
     "conditional": [
       {
-        "range": "B2",
-        "formula": "=$B$2=\"OK\"",
+        "range": "B3",
+        "formula": "=$B$3=\"OK\"",
         "background": "#dcefe2",
         "color": "#1b5e34",
         "bold": true
       },
       {
-        "range": "B2",
-        "formula": "=$B$2<>\"OK\"",
+        "range": "B3",
+        "formula": "=$B$3<>\"OK\"",
         "background": "#f7d4d4",
         "color": "#8a1c1c",
         "bold": true
       },
       {
         "range": "A26:Z",
-        "formula": "=LEFT($B26,13)=\"Stocks under \"",
+        "formula": "=LEFT($B26,17)=\"Securities under \"",
         "background": "#f4f3ee",
         "color": "#3c3b37",
         "italic": true
       },
       {
         "range": "A26:Z",
-        "formula": "=OR($B26=\"Funds we can't see inside\",$B26=\"Not stocks\",$B26=\"Fund overlap\")",
+        "formula": "=OR($A26=\"Your holdings\",$B26=\"Fund overlap\",$B26=\"Funds not looked through\",$B26=\"Other holdings\")",
         "bold": true
       },
       {
         "range": "A26:Z",
-        "formula": "=OR(AND($B26=\"Holding\",$C26=\"Fund in the mix\"),$B26=\"Line\",$B26=\"Fund 1\")",
+        "formula": "=OR(AND($A26=\"Holding\",$B26=\"Ticker\"),AND($A26=\"Rank\",$B26=\"Company\"),$B26=\"Fund 1\",AND($B26=\"Holding\",$C26=\"Fund in the mix\"),$B26=\"Line\")",
         "bold": true,
         "background": "#f7f6f1"
       },
       {
         "range": "A26:Z",
-        "formula": "=$B26=\"Total of all lines\"",
+        "formula": "=OR(AND($A26=\"Total\",$B26=\"\",$C26=\"\"),$B26=\"Total of all lines\")",
         "bold": true
       },
       {
         "range": "A26:Z",
-        "formula": "=OR($B26=\"The positions in a fund report can add up to more than 100% of the net assets of the fund. This total can then be above 100%.\",$B26=\"Overlap is the part of the two funds that sits in the same stocks.\")",
+        "formula": "=OR($A26=\"A commodity trust or a crypto trust, such as GLD or IBIT, counts as one security.\",$B26=\"Overlap is the part of the two funds that sits in the same securities.\",$B26=\"The positions in a fund report can add up to more than 100% of the net assets of the fund. This total can then be above 100%.\")",
         "color": "#6b6962",
         "italic": true
       },
@@ -374,12 +352,12 @@
     ],
     "validation": [
       {
-        "range": "B22",
+        "range": "B23",
         "between": [0, 1],
         "message": "Type a percent from 0% to 100%, such as 1%."
       },
       {
-        "range": "B23",
+        "range": "B24",
         "between": [0, 1],
         "message": "Type a percent from 0% to 100%, such as 10%."
       }

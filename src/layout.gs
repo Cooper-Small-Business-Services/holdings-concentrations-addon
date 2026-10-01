@@ -33,7 +33,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads. The next refresh then replaces the two
  * tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 3;
+const LAYOUT_VERSION = 4;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -69,43 +69,46 @@ const INPUTS = {
 const INPUT_ROWS = 40;
 
 /**
- * The row of the total value cell of the report tab. The cell is in column
- * B.
+ * The row of the status cell and the row of the total value cell of the
+ * report tab. Both cells are in column B.
  */
-const TOTAL_ROW = 5;
+const STATUS_ROW = 3;
+const TOTAL_ROW = 6;
 
 /**
- * The row of the header of the block of the stock measures, and the row of
- * the header of the composition block.
+ * The row of the header of the block of the security measures, and the row
+ * of the header of the composition block.
  */
-const STOCKS_ROW = 11;
-const COMPOSITION_ROW = 17;
+const STOCKS_ROW = 12;
+const COMPOSITION_ROW = 18;
 
 /**
  * The row of the threshold cell, and the row of the overlap minimum cell.
  * Both cells are in column B.
  */
-const THRESHOLD_ROW = 22;
-const OVERLAP_ROW = 23;
+const THRESHOLD_ROW = 23;
+const OVERLAP_ROW = 24;
 
 /**
- * The row of the header of the company table. The spill of the report starts
- * in the next row.
+ * The row of the report spill. The spill holds the section Your holdings,
+ * the header of the company table, the company table, and each section under
+ * it. The row count of the section Your holdings changes with the Holdings
+ * tab, so the header of the company table is inside the spill.
  */
-const TABLE_ROW = 25;
+const REPORT_ROW = 26;
 
 /**
  * The share of the portfolio at or above which a holding that the route
- * cannot look through gets a row of its own in the section of the funds that
- * we can't see inside.
+ * cannot look through gets a row of its own in the section of the funds not
+ * looked through.
  */
 const UNSEEN_FLOOR = 0.01;
 
 /**
- * The title of the section of the funds that we can't see inside, and the
- * text of each row of a holding with no mix.
+ * The title of the section of the funds not looked through, and the text of
+ * each row of a holding with no mix.
  */
-const UNSEEN_TITLE = "Funds we can't see inside";
+const UNSEEN_TITLE = "Funds not looked through";
 const ADD_MIX_NOTE = "Add its fund mix: Concentration › Describe a fund";
 
 /**
@@ -114,10 +117,24 @@ const ADD_MIX_NOTE = "Add its fund mix: Concentration › Describe a fund";
 const MIX_AGE_DAYS = 182;
 
 /**
- * The last row that the fund table can use. The spill of the fund table
- * starts in D3, and the header of the company table is in row TABLE_ROW.
+ * The title of the section of the holdings that are not securities of a
+ * company, below the company table, and the title of the section of the
+ * groups of the Holdings tab, above it.
  */
-const FUND_LAST_ROW = TABLE_ROW - 1;
+const OTHER_TITLE = "Other holdings";
+const HOLDINGS_TITLE = "Your holdings";
+
+/**
+ * The first sentence of the report tab, in B1.
+ */
+const DISCLAIMER = "This report is not investment advice.";
+
+/**
+ * The first row of the spill of the fund table, in column D, and the last
+ * row that the spill can use. The report spill starts in row REPORT_ROW.
+ */
+const FUND_ROW = 4;
+const FUND_LAST_ROW = REPORT_ROW - 1;
 
 /**
  * A reference to a range of the tab Concentration.Exposure.
@@ -203,21 +220,21 @@ function exposureColumn(letter) {
 }
 
 /**
- * The formula of B5: the sum of the Value column of the Holdings tab. The
+ * The formula of B6: the sum of the Value column of the Holdings tab. The
  * formula finds the column by the header text in row 1, with the match rule
  * of findColumns. INDIRECT with the R1C1 text "C" and the column number reads
  * the whole column, so the formula holds no column letter. The header text in
- * row 1 adds nothing to the sum. When row 1 holds no Value column, B5 shows a
+ * row 1 adds nothing to the sum. When row 1 holds no Value column, B6 shows a
  * text in place of a number.
  */
 const TOTAL_FORMULA = `=LET(c,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(Holdings!$1:$1),"Value"))),
 IF(ISNA(c),"No Holdings column Value",SUM(INDIRECT("Holdings!C"&c,FALSE))))`;
 
 /**
- * The formula of D3: the funds that the route looked through, with the
+ * The formula of D4: the funds that the route looked through, with the
  * report date, the count of holdings, the weight, and the covered part. A
  * fund of a mix shows the holding and the ticker of the fund. When the route
- * looked through no fund, D3 shows a text.
+ * looked through no fund, D4 shows a text.
  */
 function fundsFormula() {
   const x = exposureColumns();
@@ -230,16 +247,16 @@ CHOOSECOLS(r,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6)))))`;
 }
 
 /**
- * The formula of B8: the seconds of the newest run in A15:B24 of the tab
- * Concentration.Exposure. B8 is empty when no run is recorded.
+ * The formula of B9: the seconds of the newest run in A15:B24 of the tab
+ * Concentration.Exposure. B9 is empty when no run is recorded.
  */
 const RUN_LAST_FORMULA = `=IF(ISNUMBER('Concentration.Exposure'!B15),'Concentration.Exposure'!B15,"")`;
 
 /**
- * The formula of B9: the average seconds of the runs in A15:B24 of the tab
+ * The formula of B10: the average seconds of the runs in A15:B24 of the tab
  * Concentration.Exposure. The block keeps 10 runs at most, so the average
- * uses each recorded run when fewer than 10 exist. B9 is empty when no run is
- * recorded.
+ * uses each recorded run when fewer than 10 exist. B10 is empty when no run
+ * is recorded.
  */
 const RUN_AVERAGE_FORMULA = `=IF(COUNT('Concentration.Exposure'!B15:B24)=0,"",AVERAGE('Concentration.Exposure'!B15:B24))`;
 
@@ -253,11 +270,11 @@ function equityFormula(name) {
 }
 
 /**
- * The formula of A16: one text when the last good answer holds lines and no
+ * The formula of A17: one text when the last good answer holds lines and no
  * equity block. The cell is empty before the first good refresh.
  */
 function noStockFormula() {
-  return `=IF(AND(ISNUMBER(${measureCell("lineCount")}),NOT(ISNUMBER(${equityCell("weight")}))),"Your portfolio holds no stock.","")`;
+  return `=IF(AND(ISNUMBER(${measureCell("lineCount")}),NOT(ISNUMBER(${equityCell("weight")}))),"Your portfolio holds no securities.","")`;
 }
 
 /**
@@ -276,7 +293,7 @@ uu,IFNA(FILTER(${exposureColumn(x.unseenWeight)},${id}<>""),0),`;
 }
 
 /**
- * The formula of B3, under the status cell: the count of the holdings that
+ * The formula of B4, under the status cell: the count of the holdings that
  * the route cannot look through and that have no mix, with their share of
  * the portfolio. The formula reads the weights of the unseen block. The cell
  * is empty when no such holding exists.
@@ -285,12 +302,12 @@ function unseenNoteFormula() {
   const x = exposureColumns();
   return `=LET(uu,${exposureColumn(x.unseenWeight)},
 n,COUNTIF(uu,">1E-12"),s,SUM(uu),
-IF(n=0,"",n&IF(n=1," holding ("," holdings (")&IF(s<0.01,"less than 1%",TEXT(s,"0%"))&" of your portfolio) "&IF(n=1,"is a fund","are funds")&" we can't see inside."))`;
+IF(n=0,"",n&IF(n=1," holding ("," holdings (")&IF(s<0.01,"less than 1%",TEXT(s,"0%"))&" of your portfolio) "&IF(n=1,"is a fund","are funds")&" not looked through."))`;
 }
 
 /**
- * The formula of the coverage label in the header of the block of the stock
- * measures: the share of the portfolio outside the lines of the class
+ * The formula of the coverage label in the header of the block of the
+ * security measures: the share of the portfolio outside the lines of the class
  * unknown. The cell is empty when the answer holds no unknownWeight.
  */
 function coverageFormula() {
@@ -329,29 +346,44 @@ const SUM_NOTE =
 /**
  * The note under the header of the fund overlap list.
  */
-const OVERLAP_NOTE = "Overlap is the part of the two funds that sits in the same stocks.";
+const OVERLAP_NOTE = "Overlap is the part of the two funds that sits in the same securities.";
 
 /**
- * The formula of the fund header, in column H of row TABLE_ROW: the header of
- * the columns of the funds that hold a stock, one column for each fund, from
- * the stock fund block. The header is empty when no fund holds a stock.
+ * The note above the header of the company table.
  */
-function fundHeaderFormula() {
-  const fund = exposureColumn(exposureColumns().stockFund);
-  return `=IFNA(TRANSPOSE(FILTER(${fund},${fund}<>"")),"")`;
-}
+const TRUST_NOTE = "A commodity trust or a crypto trust, such as GLD or IBIT, counts as one security.";
 
 /**
- * The formula of the report spill, in column A of the row under TABLE_ROW.
- * The spill holds these blocks from the top: the company table, the section
- * of the funds that we can't see inside, the block of the holdings that are
- * not stocks, the total, and the fund overlap list.
+ * The text of the section Your holdings when the Holdings tab holds no
+ * Symbol, Description, or Value column, and the name of a group of rows with
+ * an empty Symbol and an empty Description.
+ */
+const HOLDINGS_COLUMNS_NOTE = "The Holdings tab needs the columns Symbol, Description, and Value.";
+const NO_NAME = "No symbol or description";
+
+/**
+ * The formula of the report spill, in column A of row REPORT_ROW. The spill
+ * holds these blocks from the top: the section Your holdings, the note on
+ * trusts, the header of the company table, the company table, the fund
+ * overlap list, the section of the funds not looked through, the section of
+ * the other holdings, and the total.
+ *
+ * The section Your holdings reads the Holdings tab alone, so it changes with
+ * no refresh. Each Holdings row with a number in Value goes into the group of
+ * its key: its Symbol, or its Description when the Symbol is empty, cut to 64
+ * characters, as buildPositions makes it. EXACT compares the keys, so two
+ * keys that differ in case give two groups, as in the script. A group row
+ * holds the Description of the first row of the group, the Symbol, the count
+ * of rows, the sum of the values, and the sum divided by the total value
+ * cell. The rows sort by value, largest first. A Total row with the total
+ * value cell ends the section.
  *
  * LN, LT, LW, LX, and LP are the columns of the lines block: the name, the
  * ticker, the weight, the stock weight, and the part name. LS is the sources
  * block, and LH is the row of the position ids. LS and LH end at the column
  * of position MAX_POSITIONS. f holds each id of the stock fund block, or one
- * empty string when the block is empty.
+ * empty string when the block is empty. The header of the company table
+ * holds one column for each id of f, from column H.
  *
  * Each row of the lines block is one part of a line. pw is the weight of the
  * part: the stock weight on a row of the stock part, and the weight minus the
@@ -362,16 +394,16 @@ function fundHeaderFormula() {
  * part of each source, so the Direct column and the fund columns add up to
  * the row.
  *
- * The section of the funds that we can't see inside gives one row to each
- * holding with no mix whose lines of the class unknown hold UNSEEN_FLOOR or
- * more of the portfolio, and one row to the rest of those holdings. Then it
- * gives one row to each fund of each mix, with the substitute mark and the
- * entry date of the mix, and one Not described row to each mix with a total
- * under 100%. A mix older than MIX_AGE_DAYS asks the person to check the
- * fact sheet. MI, MW, ME, MT, MP, and MS are the columns of the mix block. hn
- * gives the Description of the Holdings tab for a Symbol, or the text that it
- * gets. Each piece of the section has a seventh column. The text "x" in it
- * marks a row that the section drops.
+ * The section of the funds not looked through gives one row to each holding
+ * with no mix whose lines of the class unknown hold UNSEEN_FLOOR or more of
+ * the portfolio, and one row to the rest of those holdings. Then it gives one
+ * row to each fund of each mix, with the substitute mark and the entry date
+ * of the mix, and one Not described row to each mix with a total under 100%.
+ * A mix older than MIX_AGE_DAYS asks the person to check the fact sheet. MI,
+ * MW, ME, MT, MP, and MS are the columns of the mix block. hn gives the
+ * Description of the Holdings tab for a Symbol, or the text that it gets.
+ * Each piece of the section has a seventh column. The text "x" in it marks a
+ * row that the section drops.
  *
  * The script writes the rows of the other part that get a row of their own
  * into the own block, and the groups of the other rows of the other part
@@ -379,15 +411,17 @@ function fundHeaderFormula() {
  * the class of its line is not stock and the line is a residual line, holds
  * a direct position, or has the class unknown. Each other row of the other
  * part goes into the group of its class. keep selects the rows of the own
- * block, and grp selects the rows of the group block. The groups of the
- * classes stock and fund always get a row. Another group with a value under
- * 100 goes into one row of small holdings.
+ * block, and grp selects the rows of the group block. Both hold 1 and 0, not
+ * TRUE and FALSE, because SUM adds no TRUE in an array, and nown and ng count
+ * the rows with SUM. The groups of the classes stock and fund always get a
+ * row. Another group with a value under 100 goes into one row of small
+ * holdings.
  *
- * The formula finds the Symbol and the Description columns of the Holdings
- * tab by the header text in row 1, as B5 finds the Value column. When B5
- * holds no number, each value cell stays empty. Each FILTER that can find no
- * row has a fallback in IFNA or IFERROR, or an IF before it that uses the
- * FILTER only when a row matches.
+ * The formula finds the Symbol, the Description, and the Value columns of the
+ * Holdings tab by the header text in row 1, as the total value cell finds the
+ * Value column. When the total value cell holds no number, each value cell
+ * stays empty. Each FILTER that can find no row has a fallback in IFNA or
+ * IFERROR, or an IF before it that uses the FILTER only when a row matches.
  */
 function reportFormula() {
   const x = exposureColumns();
@@ -399,7 +433,22 @@ f,IFNA(FILTER(${column(x.stockFund)},${column(x.stockFund)}<>""),""),
 hh,Holdings!$1:$1,
 hs,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Symbol"))),
 hd,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Description"))),
+hv,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(hh),"Value"))),
 tot,IF(ISNUMBER($B$${TOTAL_ROW}),$B$${TOTAL_ROW},NA()),thr,$B$${THRESHOLD_ROW},
+yours,IF(ISNA(hs)+ISNA(hd)+ISNA(hv)>0,"${HOLDINGS_COLUMNS_NOTE}",
+ LET(yv,INDIRECT("Holdings!C"&hv,FALSE),
+  ys,ARRAYFORMULA(TRIM(INDIRECT("Holdings!C"&hs,FALSE))),yd,ARRAYFORMULA(TRIM(INDIRECT("Holdings!C"&hd,FALSE))),
+  yok,ARRAYFORMULA(ISNUMBER(yv)*1),
+  IF(SUM(yok)=0,"No holding on the Holdings tab has a value.",
+   LET(fk,FILTER(ARRAYFORMULA(LEFT(IF(ys<>"",ys,yd),64)),yok),fs,FILTER(ys,yok),fd,FILTER(yd,yok),fv,FILTER(yv,yok),
+    yu,UNIQUE(fk),
+    yi,MAP(yu,LAMBDA(k,XMATCH(TRUE,ARRAYFORMULA(EXACT(fk,k))))),
+    yn,MAP(yu,yi,LAMBDA(k,i,IF(INDEX(fd,i)<>"",INDEX(fd,i),IF(k<>"",k,"${NO_NAME}")))),
+    yt,MAP(yi,LAMBDA(i,INDEX(fs,i))),
+    yc,MAP(yu,LAMBDA(k,SUMPRODUCT(EXACT(fk,k)*1))),
+    yw,MAP(yu,LAMBDA(k,SUMPRODUCT(EXACT(fk,k)*fv))),
+    VSTACK(SORT(HSTACK(yn,yt,yc,yw,ARRAYFORMULA(IFERROR(yw/tot,""))),4,FALSE),
+     HSTACK("Total","","",tot,IFERROR(tot/tot,""))))))),
 MI,${column(x.mixId)},MW,${column(x.mixWeight)},ME,${column(x.mixEntered)},
 MT,${column(x.mixTicker)},MP,${column(x.mixPart)},MS,${column(x.mixSubstitute)},
 hn,LAMBDA(n,IF(ISNA(hs)+ISNA(hd),n,IFNA(XLOOKUP(n,INDIRECT("Holdings!C"&hs,FALSE),INDIRECT("Holdings!C"&hd,FALSE)),n))),
@@ -417,7 +466,7 @@ rsel,ARRAYFORMULA((LP="${STOCK_PART}")*ISNUMBER(LX)*(LX<thr)),
 rw,SUMIFS(LX,LP,"${STOCK_PART}",LX,"<"&thr),
 rc,COUNTIFS(LP,"${STOCK_PART}",LX,"<"&thr,LX,"<>0"),
 rf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,"${STOCK_PART}",LX,"<"&thr),0))),
-rest,HSTACK("","Stocks under "&TEXT(thr,"0.00%")&" ("&TEXT(rc,"#,##0")&")","",rw*tot,rw,"",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),
+rest,HSTACK("","Securities under "&TEXT(thr,"0.00%")&" ("&TEXT(rc,"#,##0")&")","",rw*tot,rw,"",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),
 ${unseenNames()}
 cx,{"","","","","","","x"},
 cu,LET(q,IFNA(FILTER(uid,uu>=${floor}),""),
@@ -440,9 +489,9 @@ cd,IF(cdn=0,cx,
    MAP(ku,LAMBDA(v,XLOOKUP(v,ki,kn))),ku,MAKEARRAY(ROWS(ku),1,LAMBDA(i,j,1))),
   SORT(VSTACK(kr,IFNA(FILTER(ko,kv>1E-9),cx)),6,TRUE,7,TRUE))),
 cv,VSTACK(cu,cs,cd),
-can,IFNA(FILTER(CHOOSECOLS(cv,1,2,3,4,5),CHOOSECOLS(cv,7)<>"x"),{"We can see inside each of your holdings.","","","",""}),
+can,IFNA(FILTER(CHOOSECOLS(cv,1,2,3,4,5),CHOOSECOLS(cv,7)<>"x"),{"Every fund is looked through.","","","",""}),
 cb,MAKEARRAY(ROWS(can),1,LAMBDA(i,j,"")),
-keep,ARRAYFORMULA(ISNUMBER(${column(x.ownWeight)})),
+keep,ARRAYFORMULA(ISNUMBER(${column(x.ownWeight)})*1),
 nown,SUM(keep),
 on,FILTER(${column(x.ownName)},keep),ok,FILTER(${column(x.ownKey)},keep),oc,FILTER(${column(x.ownClass)},keep),
 ow,FILTER(${column(x.ownWeight)},keep),came,FILTER(${column(x.ownSources)},keep),
@@ -452,11 +501,11 @@ oname,IF(ISNA(hs)+ISNA(hd),on,
 kind,MAP(ok,oc,on,LAMBDA(k,c,n,IF(LEFT(k,9)="residual:","not looked through",IF(RIGHT(n,16)=" (not described)","not described",
  SWITCH(c,"fund","fund, no holdings data","unknown","not in the SEC data",c))))),
 ownRows,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),
-grp,ARRAYFORMULA(ISNUMBER(${column(x.groupWeight)})),
+grp,ARRAYFORMULA(ISNUMBER(${column(x.groupWeight)})*1),
 cls,FILTER(${column(x.groupClass)},grp),
 gw,FILTER(${column(x.groupWeight)},grp),
 gn,FILTER(${column(x.groupCount)},grp),
-gl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,"stock","Bonds and other securities of companies you hold as stock","fund","Funds held by your funds, not looked through","cash","Cash and money market funds inside funds","derivative","Derivatives inside funds","treasury","Treasury securities inside funds","other","Other holdings inside funds",x&" inside funds")&" ("&TEXT(m,"#,##0")&")")),
+gl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,"stock","Bonds of companies whose stock you hold","fund","Funds held by your funds, not looked through","cash","Cash and money market funds inside funds","derivative","Derivatives inside funds","treasury","Treasury securities inside funds","other","Other holdings inside funds",x&" inside funds")&" ("&TEXT(m,"#,##0")&")")),
 gk,MAP(cls,LAMBDA(x,SWITCH(x,"stock","bond or other security","fund","fund, not looked through",x))),
 gf,FILTER(${column(x.groupSources)},grp),
 grpAll,HSTACK(gl,gk,ARRAYFORMULA(gw*tot),gw,gf),
@@ -468,7 +517,7 @@ smallRow,HSTACK("Other small holdings inside funds ("&TEXT(SUM(FILTER(gn,sm)),"#
  TEXTJOIN(", ",TRUE,FILTER(gk,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),
  IFERROR(TEXTJOIN(", ",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(",",TRUE,FILTER(gf,sm)),",")))))),"")),
 main,IF(nown=0,FILTER(grpAll,big),IF(ng=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),
-nis,IF(nown+ng=0,IF(nsm=0,"No holding other than stocks.",smallRow),
+nis,IF(nown+ng=0,IF(nsm=0,"No holding other than securities.",smallRow),
  IF(nsm=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),
 blank,MAKEARRAY(ROWS(nis),1,LAMBDA(i,j,"")),
 pa,${column(x.pairFirst)},pb,${column(x.pairSecond)},po,${column(x.pairOverlap)},pn,${column(x.pairShared)},
@@ -479,22 +528,28 @@ plist,IF(SUM(psel)=0,HSTACK("","No pair of funds is at or above the overlap mini
  LET(qa,FILTER(pa,psel),qb,FILTER(pb,psel),gap,MAKEARRAY(ROWS(qa),1,LAMBDA(i,j,"")),
   HSTACK(gap,qa,qb,gap,FILTER(po,psel),FILTER(pn,psel),
    MAP(qa,LAMBDA(v,pwt(v))),MAP(qb,LAMBDA(v,pwt(v)))))),
-IFNA(VSTACK(top,rest,"",
+IFNA(VSTACK("${HOLDINGS_TITLE}",
+ {"Holding","Ticker","Accounts","Value","% of portfolio"},
+ yours,
+ "",
+ "${TRUST_NOTE}",
+ HSTACK({"Rank","Company","Ticker","Value","% of portfolio","","Direct"},TRANSPOSE(f)),
+ top,rest,"",
+ HSTACK("","Fund overlap"),
+ HSTACK("","${OVERLAP_NOTE}"),
+ {"","Fund 1","Fund 2","","Overlap","Shared securities","Fund 1 weight","Fund 2 weight"},
+ plist,
+ "",
  HSTACK("","${UNSEEN_TITLE}"),
  {"","Holding","Fund in the mix","Value","% of portfolio","Note"},
  HSTACK(cb,can),
  "",
- HSTACK("","Not stocks"),
+ HSTACK("","${OTHER_TITLE}"),
  {"","Line","Kind","Value","% of portfolio","Came from"},
  HSTACK(blank,nis),
  "",
  HSTACK("","Total of all lines","",SUM(pw)*tot,SUM(pw)),
- HSTACK("","${SUM_NOTE}"),
- "",
- HSTACK("","Fund overlap"),
- HSTACK("","${OVERLAP_NOTE}"),
- {"","Fund 1","Fund 2","","Overlap","Shared stocks","Fund 1 weight","Fund 2 weight"},
- plist),""))`;
+ HSTACK("","${SUM_NOTE}")),""))`;
 }
 
 /**
@@ -606,32 +661,40 @@ function exposureLayout() {
 /**
  * The layout of the tab Concentration. `inputs` holds the value of the
  * threshold cell and of the overlap minimum cell, by the names of INPUTS. An
- * absent name gets the value of INPUTS. A person can change both cells. B3,
- * under the status cell, counts the holdings that we can't see inside. B8
- * and B9 show the seconds of the last good refresh and the average of the
- * recorded refreshes. The header of the stock measures carries the coverage
- * label.
+ * absent name gets the value of INPUTS. A person can change both cells. B1
+ * holds the disclaimer. B4, under the status cell, counts the holdings that
+ * are funds not looked through. B9 and B10 show the seconds of the last good
+ * refresh and the average of the recorded refreshes. The header of the
+ * security measures carries the coverage label.
+ *
+ * The report spill starts in row REPORT_ROW, and its row count changes with
+ * the Holdings tab. So the conditional formats find the titles, the headers,
+ * the totals, and the notes of the spill by their text. The number formats
+ * and the alignment of the columns apply from row REPORT_ROW to the last row.
  */
 function reportLayout(inputs = {}) {
   const threshold = inputs.threshold === undefined ? INPUTS.threshold.value : inputs.threshold;
   const overlapMinimum = inputs.overlapMinimum === undefined ? INPUTS.overlapMinimum.value : inputs.overlapMinimum;
   const last = columnLetter(REPORT_COLUMNS);
-  const first = TABLE_ROW + 1;
+  const first = REPORT_ROW;
   const spill = `A${first}:${last}`;
+  const status = STATUS_ROW;
   const total = `$B$${TOTAL_ROW}`;
   const stocks = STOCKS_ROW;
   const comp = COMPOSITION_ROW;
+  const fund = FUND_ROW;
   return {
     name: REPORT_TAB,
     rows: TAB_ROWS,
     columns: REPORT_COLUMNS,
     hidden: false,
-    frozenRows: 1,
+    frozenRows: 2,
     columnWidths: { A: 250, B: 300, C: 150, D: 175, E: 110, F: 180, [`G:${last}`]: 96 },
     cells: [
-      { range: "A1:B1", values: [["Concentration", "Your stock exposure by company, with a look inside each fund."]] },
+      { range: "A1:B1", values: [["Concentration", DISCLAIMER]] },
+      { range: "B2", values: [["Your securities by company, with a look inside each fund."]] },
       {
-        range: "D1",
+        range: "D2",
         values: [
           [
             "A fund that holds other funds uses the newest report of each held fund. The date of a held report can differ from the date in this table.",
@@ -639,7 +702,7 @@ function reportLayout(inputs = {}) {
         ],
       },
       {
-        range: "A2:B9",
+        range: `A${status}:B${status + 7}`,
         values: [
           ["Status", `=${exposure("B1")}`],
           ["", unseenNoteFormula()],
@@ -651,16 +714,19 @@ function reportLayout(inputs = {}) {
           ["Average (last 10)", RUN_AVERAGE_FORMULA],
         ],
       },
-      { range: "D2:H2", values: [["Fund looked through", "Report date", "Holdings", "Weight", "Covered"]] },
-      { range: "D3", values: [[fundsFormula()]] },
+      {
+        range: `D${fund - 1}:H${fund - 1}`,
+        values: [["Fund looked through", "Report date", "Holdings", "Weight", "Covered"]],
+      },
+      { range: `D${fund}`, values: [[fundsFormula()]] },
       {
         range: `A${stocks}:B${stocks + 5}`,
         values: [
-          ["Your stocks alone", coverageFormula()],
-          ["Stocks, share of your portfolio", equityFormula("weight")],
-          ["Top 10 stocks, share of your stocks", equityFormula("top10Weight")],
-          ["HHI of your stocks, 0 to 10,000", equityFormula("hhi")],
-          ["Effective number of stocks", equityFormula("effectiveCount")],
+          ["Your securities alone", coverageFormula()],
+          ["Securities, share of your portfolio", equityFormula("weight")],
+          ["Top 10 securities, share of your securities", equityFormula("top10Weight")],
+          ["HHI of your securities, 0 to 10,000", equityFormula("hhi")],
+          ["Effective number of securities", equityFormula("effectiveCount")],
           [noStockFormula(), ""],
         ],
       },
@@ -669,51 +735,46 @@ function reportLayout(inputs = {}) {
         values: [
           ["Composition", "Value", "% of portfolio"],
           [
-            `="Stocks at "&TEXT($B$${THRESHOLD_ROW},"0.00%")&" or more"`,
+            `="Securities at "&TEXT($B$${THRESHOLD_ROW},"0.00%")&" or more"`,
             `=IF(ISNUMBER(${total}),C${comp + 1}*${total},"")`,
             stockSumFormula(">="),
           ],
           [
-            `="Stocks under "&TEXT($B$${THRESHOLD_ROW},"0.00%")`,
+            `="Securities under "&TEXT($B$${THRESHOLD_ROW},"0.00%")`,
             `=IF(ISNUMBER(${total}),C${comp + 2}*${total},"")`,
             stockSumFormula("<"),
           ],
-          ["Not stocks", `=IF(ISNUMBER(${total}),C${comp + 3}*${total},"")`, otherSumFormula()],
+          [OTHER_TITLE, `=IF(ISNUMBER(${total}),C${comp + 3}*${total},"")`, otherSumFormula()],
         ],
       },
       {
         range: `A${THRESHOLD_ROW}:C${OVERLAP_ROW}`,
         values: [
-          [INPUTS.threshold.label, threshold, "Type a percent. Each company whose stock is at or above it gets a row."],
+          [
+            INPUTS.threshold.label,
+            threshold,
+            "Type a percent. Each company whose securities are at or above it gets a row.",
+          ],
           [
             INPUTS.overlapMinimum.label,
             overlapMinimum,
-            "Type a percent. The fund overlap list under the tables shows each pair of funds at or above it.",
+            "Type a percent. The fund overlap list under the company table shows each pair of funds at or above it.",
           ],
         ],
       },
-      {
-        range: `A${TABLE_ROW - 1}`,
-        values: [["A commodity trust or a crypto trust, such as GLD or IBIT, counts as one stock."]],
-      },
-      {
-        range: `A${TABLE_ROW}:G${TABLE_ROW}`,
-        values: [["Rank", "Company", "Ticker", "Value", "% of portfolio", "", "Direct"]],
-      },
-      { range: `H${TABLE_ROW}`, values: [[fundHeaderFormula()]] },
       { range: `A${first}`, values: [[reportFormula()]] },
     ],
     styles: [
       { range: "A1", bold: true, fontSize: 16 },
-      { range: "B1", color: "#6b6962", italic: true },
-      { range: "D1", color: "#6b6962", italic: true },
-      { range: `A2:A${comp + 3}`, color: "#57554f" },
-      { range: "B4", numberFormat: "yyyy-mm-dd hh:mm" },
+      { range: "B1:B2", color: "#6b6962", italic: true },
+      { range: "D2", color: "#6b6962", italic: true },
+      { range: `A${status}:A${comp + 3}`, color: "#57554f" },
+      { range: `B${status + 2}`, numberFormat: "yyyy-mm-dd hh:mm" },
       { range: `B${TOTAL_ROW}`, numberFormat: "$#,##0", bold: true },
-      { range: "B6:B7", numberFormat: "0.00%" },
-      { range: "B8:B9", numberFormat: '0.0" s"' },
-      { range: "B2:B9", align: "right" },
-      { range: "B3", align: "left", color: "#6b6962", italic: true, wrap: true },
+      { range: `B${status + 4}:B${status + 5}`, numberFormat: "0.00%" },
+      { range: `B${status + 6}:B${status + 7}`, numberFormat: '0.0" s"' },
+      { range: `B${status}:B${status + 7}`, align: "right" },
+      { range: `B${status + 1}`, align: "left", color: "#6b6962", italic: true, wrap: true },
       { range: `A${stocks}:B${stocks}`, bold: true, background: "#f7f6f1", color: "#1d1c1a" },
       { range: `B${stocks}`, bold: false, italic: true, color: "#57554f" },
       { range: `B${stocks + 1}:B${stocks + 2}`, numberFormat: "0.00%" },
@@ -733,47 +794,49 @@ function reportLayout(inputs = {}) {
         align: "right",
       },
       { range: `C${THRESHOLD_ROW}:C${OVERLAP_ROW}`, color: "#6b6962", italic: true },
-      { range: `A${TABLE_ROW - 1}`, color: "#6b6962", italic: true },
-      { range: `A${TABLE_ROW}:${last}${TABLE_ROW}`, bold: true, background: "#f7f6f1" },
-      { range: `A${TABLE_ROW}`, align: "right" },
-      { range: `D${TABLE_ROW}:${last}${TABLE_ROW}`, align: "right" },
       { range: `A${first}:A`, numberFormat: "0" },
-      { range: `D${first}:D`, numberFormat: "$#,##0" },
-      { range: `E${first}:E`, numberFormat: "0.00%" },
+      { range: `D${first}:D`, numberFormat: "$#,##0", align: "right" },
+      { range: `E${first}:E`, numberFormat: "0.00%", align: "right" },
       { range: `F${first}:F`, numberFormat: "#,##0", wrap: true },
-      { range: `G${first}:${last}`, numberFormat: '0.00%;-0.00%;""' },
-      { range: "D2:H2", bold: true, background: "#f7f6f1" },
-      { range: `D3:D${FUND_LAST_ROW}`, bold: true },
-      { range: `E3:E${FUND_LAST_ROW}`, numberFormat: "yyyy-mm-dd" },
-      { range: `F3:F${FUND_LAST_ROW}`, numberFormat: "#,##0" },
-      { range: `G3:G${FUND_LAST_ROW}`, numberFormat: "0.00%" },
-      { range: `H3:H${FUND_LAST_ROW}`, numberFormat: "0.0%" },
+      { range: `G${first}:${last}`, numberFormat: '0.00%;-0.00%;""', align: "right" },
+      { range: `D${fund - 1}:H${fund - 1}`, bold: true, background: "#f7f6f1" },
+      { range: `D${fund}:D${FUND_LAST_ROW}`, bold: true },
+      { range: `E${fund}:E${FUND_LAST_ROW}`, numberFormat: "yyyy-mm-dd" },
+      { range: `F${fund}:F${FUND_LAST_ROW}`, numberFormat: "#,##0" },
+      { range: `G${fund}:G${FUND_LAST_ROW}`, numberFormat: "0.00%" },
+      { range: `H${fund}:H${FUND_LAST_ROW}`, numberFormat: "0.0%" },
     ],
     conditional: [
-      { range: "B2", formula: '=$B$2="OK"', background: "#dcefe2", color: "#1b5e34", bold: true },
-      { range: "B2", formula: '=$B$2<>"OK"', background: "#f7d4d4", color: "#8a1c1c", bold: true },
+      { range: `B${status}`, formula: `=$B$${status}="OK"`, background: "#dcefe2", color: "#1b5e34", bold: true },
+      { range: `B${status}`, formula: `=$B$${status}<>"OK"`, background: "#f7d4d4", color: "#8a1c1c", bold: true },
       {
         range: spill,
-        formula: `=LEFT($B${first},13)="Stocks under "`,
+        formula: `=LEFT($B${first},17)="Securities under "`,
         background: "#f4f3ee",
         color: "#3c3b37",
         italic: true,
       },
       {
         range: spill,
-        formula: `=OR($B${first}="${UNSEEN_TITLE}",$B${first}="Not stocks",$B${first}="Fund overlap")`,
+        formula: `=OR($A${first}="${HOLDINGS_TITLE}",$B${first}="Fund overlap",$B${first}="${UNSEEN_TITLE}",$B${first}="${OTHER_TITLE}")`,
         bold: true,
       },
       {
         range: spill,
-        formula: `=OR(AND($B${first}="Holding",$C${first}="Fund in the mix"),$B${first}="Line",$B${first}="Fund 1")`,
+        formula:
+          `=OR(AND($A${first}="Holding",$B${first}="Ticker"),AND($A${first}="Rank",$B${first}="Company"),` +
+          `$B${first}="Fund 1",AND($B${first}="Holding",$C${first}="Fund in the mix"),$B${first}="Line")`,
         bold: true,
         background: "#f7f6f1",
       },
-      { range: spill, formula: `=$B${first}="Total of all lines"`, bold: true },
       {
         range: spill,
-        formula: `=OR($B${first}="${SUM_NOTE}",$B${first}="${OVERLAP_NOTE}")`,
+        formula: `=OR(AND($A${first}="Total",$B${first}="",$C${first}=""),$B${first}="Total of all lines")`,
+        bold: true,
+      },
+      {
+        range: spill,
+        formula: `=OR($A${first}="${TRUST_NOTE}",$B${first}="${OVERLAP_NOTE}",$B${first}="${SUM_NOTE}")`,
         color: "#6b6962",
         italic: true,
       },
