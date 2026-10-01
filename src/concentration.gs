@@ -170,10 +170,42 @@ const FUND_FIELDS = [
 const MIX_FIELDS = ["mixId", "mixWeight", "entered", "partTicker", "partWeight", "substitute"];
 
 /**
- * The fields of each line, in the order of the columns AB:AH. Column AI
+ * The fields of each line, in the order of the columns AR:AX. Column AY
  * holds the part of the line that the row gives: STOCK_PART or OTHER_PART.
+ * Column AZ holds the direct weight of the row.
  */
 const LINE_FIELDS = ["key", "name", "ticker", "lei", "class", "weight", "stockWeight"];
+
+/**
+ * The fields of the unseen block, in the order of the columns AB:AC. Each
+ * position gets one row, in the order of the request: the position id and
+ * the weight of the lines of the class unknown that came through the
+ * position. A position with a mix gets 0.
+ */
+const UNSEEN_FIELDS = ["unseenId", "unseenWeight"];
+
+/**
+ * The field of the stock fund block, in column AE. Each position that the
+ * route looked through and that gave weight to the stock part gets one row,
+ * in the order of the funds block, one time each.
+ */
+const STOCK_FUND_FIELDS = ["stockFundId"];
+
+/**
+ * The fields of the own block, in the order of the columns AG:AK. Each row
+ * of the lines block that the report shows on a row of its own gets one row:
+ * the key, the name, and the class of its line, the part weight, and the ids
+ * of the positions that gave weight to the row.
+ */
+const OWN_FIELDS = ["ownKey", "ownName", "ownClass", "ownWeight", "ownSources"];
+
+/**
+ * The fields of the group block, in the order of the columns AM:AP. Each
+ * class of the rows of the lines block that go into a group gets one row:
+ * the class, the sum of the part weights, the count of rows, and the ids of
+ * the positions that gave weight to the group.
+ */
+const GROUP_FIELDS = ["groupClass", "groupWeight", "groupCount", "groupSources"];
 
 /**
  * The part name of a row that holds the stock part of a line.
@@ -218,19 +250,46 @@ const OVERLAP_COLUMN = FUND_COLUMN + FUND_FIELDS.length + 1;
 const MIX_COLUMN = OVERLAP_COLUMN + OVERLAP_WIDTH + 1;
 
 /**
- * The first column of the lines block, AB.
+ * The first column of the unseen block, AB.
  */
-const LINE_COLUMN = MIX_COLUMN + MIX_FIELDS.length + 1;
+const UNSEEN_COLUMN = MIX_COLUMN + MIX_FIELDS.length + 1;
 
 /**
- * The column of the part name of each row of the lines block, AI.
+ * The column of the stock fund block, AE.
+ */
+const STOCK_FUND_COLUMN = UNSEEN_COLUMN + UNSEEN_FIELDS.length + 1;
+
+/**
+ * The first column of the own block, AG.
+ */
+const OWN_COLUMN = STOCK_FUND_COLUMN + STOCK_FUND_FIELDS.length + 1;
+
+/**
+ * The first column of the group block, AM.
+ */
+const GROUP_COLUMN = OWN_COLUMN + OWN_FIELDS.length + 1;
+
+/**
+ * The first column of the lines block, AR.
+ */
+const LINE_COLUMN = GROUP_COLUMN + GROUP_FIELDS.length + 1;
+
+/**
+ * The column of the part name of each row of the lines block, AY.
  */
 const PART_COLUMN = LINE_COLUMN + LINE_FIELDS.length;
 
 /**
- * The first column of the sources block, AJ. Each position gets one column.
+ * The column of the direct weight of each row of the lines block, AZ: the
+ * part weight of the row minus the cells of the positions that the route
+ * looked through.
  */
-const SOURCE_COLUMN = PART_COLUMN + 1;
+const DIRECT_COLUMN = PART_COLUMN + 1;
+
+/**
+ * The first column of the sources block, BA. Each position gets one column.
+ */
+const SOURCE_COLUMN = DIRECT_COLUMN + 1;
 
 /**
  * The row of the header of the run-time block, A14:B14. The block holds one
@@ -719,10 +778,12 @@ function sourceOf(map, id) {
 }
 
 /**
- * The rows from AB5: the lines block and the sources block together. A line
- * gives one row for its stock part, one row for its other part, or both, in
- * the order of the answer. A row holds the fields of LINE_FIELDS, then the
- * part name, then one cell for each position id in the order of the request.
+ * The part rows of the lines of an answer. A line gives one row for its
+ * stock part, one row for its other part, or both, in the order of the
+ * answer. A row holds the fields of LINE_FIELDS, then the part name, then
+ * one cell for each position id in the order of the request. writeAnswer
+ * puts the direct weight of each row between the part name and the cells,
+ * and writes the rows from AR5.
  *
  * A cell of a stock row holds the stock weight that came through the
  * position: the entry of stockSources. A cell of an other row holds the
@@ -756,6 +817,187 @@ function partRows(lines, ids) {
 }
 
 /**
+ * The class of a line of stock.
+ */
+const STOCK_CLASS = "stock";
+
+/**
+ * The class of a line that the route cannot name a kind for: a holding that
+ * the route cannot look through.
+ */
+const UNKNOWN_CLASS = "unknown";
+
+/**
+ * The start of the key of a residual line: the part of a fund that its
+ * report does not list.
+ */
+const RESIDUAL_PREFIX = "residual:";
+
+/**
+ * The smallest direct weight that gives a row of the other part a row of its
+ * own in the report.
+ */
+const DIRECT_FLOOR = 1e-12;
+
+/**
+ * The number of a cell, or 0 when the cell holds no number.
+ */
+function cellNumber(value) {
+  return isNumber(value) ? value : 0;
+}
+
+/**
+ * The cell of a part row for the position at index `i` of the request.
+ */
+function sourceCell(row, i) {
+  return row[LINE_FIELDS.length + 1 + i];
+}
+
+/**
+ * The part weight of a part row: the stock weight on a row of the stock
+ * part, and the weight minus the stock weight on a row of the other part.
+ */
+function partWeight(row) {
+  const stock = cellNumber(row[LINE_FIELDS.indexOf("stockWeight")]);
+  const part = row[LINE_FIELDS.length];
+  if (part === STOCK_PART) return stock;
+  if (part === OTHER_PART) return cellNumber(row[LINE_FIELDS.indexOf("weight")]) - stock;
+  return 0;
+}
+
+/**
+ * The ids of the positions of the request, in the request order, that gave
+ * a number other than 0 to a part row, joined with a comma and a space.
+ */
+function sourceIds(row, ids) {
+  return ids.filter((_, i) => cellNumber(sourceCell(row, i)) !== 0).join(", ");
+}
+
+/**
+ * The position ids of the funds block, one time each, in the order of the
+ * block. An element with no id adds nothing.
+ */
+function fundIds(funds) {
+  const ids = new Set();
+  for (const fund of funds) {
+    const id = cellValue(fund.id);
+    if (id !== "") ids.add(id);
+  }
+  return [...ids];
+}
+
+/**
+ * The direct weight of each part row: the part weight minus the sum of the
+ * cells of the positions that the funds block names. The sum adds the cells
+ * in the order of the request.
+ */
+function directWeights(parts, ids, funds) {
+  const looked = new Set(fundIds(funds));
+  const at = [];
+  ids.forEach((id, i) => {
+    if (looked.has(id)) at.push(i);
+  });
+  return parts.map((row) => partWeight(row) - at.reduce((sum, i) => sum + cellNumber(sourceCell(row, i)), 0));
+}
+
+/**
+ * True when the report gives a part row a row of its own: a row of the
+ * other part whose line is not of the class stock, and whose line is a
+ * residual line, has a direct weight, or has the class unknown.
+ */
+function isOwnRow(row, direct) {
+  const key = String(row[0]);
+  const kind = row[LINE_FIELDS.indexOf("class")];
+  return (
+    row[LINE_FIELDS.length] === OTHER_PART &&
+    kind !== STOCK_CLASS &&
+    (key.startsWith(RESIDUAL_PREFIX) || Math.abs(direct) > DIRECT_FLOOR || kind === UNKNOWN_CLASS)
+  );
+}
+
+/**
+ * The rows of the own block: one row for each part row with a row of its
+ * own, in the order of the part rows. A residual row with a part weight of
+ * 0 gets no row. `direct` holds the direct weight of each part row.
+ */
+function ownRows(parts, ids, direct) {
+  const rows = [];
+  parts.forEach((row, r) => {
+    if (!isOwnRow(row, direct[r])) return;
+    const weight = partWeight(row);
+    if (String(row[0]).startsWith(RESIDUAL_PREFIX) && weight === 0) return;
+    const name = row[LINE_FIELDS.indexOf("name")];
+    rows.push([row[0], name, row[LINE_FIELDS.indexOf("class")], weight, sourceIds(row, ids)]);
+  });
+  return rows;
+}
+
+/**
+ * The rows of the group block: one row for each class of the rows of the
+ * other part with no row of their own, in the order of the first row of each
+ * class. A row holds the class, the sum of the part weights, the count of
+ * rows, and the ids of the positions whose cells add up to a number other
+ * than 0. The sums add the rows in their order.
+ */
+function groupRows(parts, ids, direct) {
+  const groups = new Map();
+  parts.forEach((row, r) => {
+    if (row[LINE_FIELDS.length] !== OTHER_PART || isOwnRow(row, direct[r])) return;
+    const kind = row[LINE_FIELDS.indexOf("class")];
+    if (!groups.has(kind)) groups.set(kind, { weight: 0, count: 0, sums: ids.map(() => 0) });
+    const group = groups.get(kind);
+    group.weight += partWeight(row);
+    group.count += 1;
+    ids.forEach((_, i) => {
+      group.sums[i] += cellNumber(sourceCell(row, i));
+    });
+  });
+  return [...groups].map(([kind, group]) => [
+    kind,
+    group.weight,
+    group.count,
+    ids.filter((_, i) => group.sums[i] !== 0).join(", "),
+  ]);
+}
+
+/**
+ * The rows of the unseen block: one row for each position, in the order of
+ * the request. A row holds the id and the sum of the cells of the position on
+ * the rows of the other part of the lines of the class unknown. A position
+ * with a mix gets 0. `mixes` holds the rows of the mix block.
+ */
+function unseenRows(parts, ids, mixes) {
+  const mixed = new Set(mixes.map((row) => row[0]));
+  const sums = ids.map(() => 0);
+  for (const row of parts) {
+    if (row[LINE_FIELDS.indexOf("class")] !== UNKNOWN_CLASS || row[LINE_FIELDS.length] !== OTHER_PART) continue;
+    ids.forEach((_, i) => {
+      sums[i] += cellNumber(sourceCell(row, i));
+    });
+  }
+  return ids.map((id, i) => [id, mixed.has(id) ? 0 : sums[i]]);
+}
+
+/**
+ * The rows of the stock fund block: each position id of the funds block, one
+ * time each and in the order of the block, whose cells on the rows of the
+ * stock part add up to a number other than 0.
+ */
+function stockFundRows(parts, ids, funds) {
+  return fundIds(funds)
+    .filter((id) => {
+      const i = ids.indexOf(id);
+      if (i < 0) return false;
+      const sum = parts.reduce(
+        (total, row) => total + (row[LINE_FIELDS.length] === STOCK_PART ? cellNumber(sourceCell(row, i)) : 0),
+        0,
+      );
+      return sum !== 0;
+    })
+    .map((id) => [id]);
+}
+
+/**
  * Write the status text into B1 and the time of the run into B2 with one
  * call.
  */
@@ -779,88 +1021,146 @@ function recordRun(sheet, started, seconds) {
 }
 
 /**
- * Add rows and columns at the end of the grid until the grid holds the given
- * count of rows and columns. The grid never shrinks.
+ * Make the grid hold the given count of rows, and TAB_ROWS rows at least.
+ * The function adds rows at the end of the grid or deletes the rows after
+ * that count. It adds columns at the end until the grid holds the given
+ * count of columns, and it deletes no column, because the report formulas
+ * read the sources block up to the column of position MAX_POSITIONS.
  */
-function growGrid(sheet, rows, columns) {
+function fitGrid(sheet, rows, columns) {
+  const want = Math.max(rows, TAB_ROWS);
   const haveRows = sheet.getMaxRows();
-  if (rows > haveRows) sheet.insertRowsAfter(haveRows, rows - haveRows);
+  if (want > haveRows) sheet.insertRowsAfter(haveRows, want - haveRows);
+  if (want < haveRows) sheet.deleteRows(want + 1, haveRows - want);
   const haveColumns = sheet.getMaxColumns();
   if (columns > haveColumns) sheet.insertColumnsAfter(haveColumns, columns - haveColumns);
 }
 
 /**
- * Set the number format `@` on the text columns: D:E, G, P:Q, U, X, and
- * AB:AE from row 5, and row 4 from column AJ. A name that starts with `=`,
- * `+`, `-`, or `@` then stays text, and a ticker such as 0700 stays text.
+ * Clear the cells of the last answer that the new answer does not write.
+ * `topLast` is the last row of the blocks left of the lines block,
+ * `lineLast` is the last row of the lines block, and `lastColumn` is the
+ * column of the last position. The function clears three areas: the columns
+ * after lastColumn from row 4, the rows after topLast from column B to the
+ * column before the lines block, and the rows after lineLast from the lines
+ * block to lastColumn. Each area ends at the last row and the last column
+ * that hold a value. Column A and the cells that the new answer writes keep
+ * their values.
+ */
+function clearStale(sheet, topLast, lineLast, lastColumn) {
+  const lastRow = sheet.getLastRow();
+  const oldColumn = sheet.getLastColumn();
+  if (lastRow < HEADER_ROW) return;
+  if (oldColumn > lastColumn) {
+    sheet.getRange(HEADER_ROW, lastColumn + 1, lastRow - HEADER_ROW + 1, oldColumn - lastColumn).clearContent();
+  }
+  if (lastRow > topLast) sheet.getRange(topLast + 1, 2, lastRow - topLast, LINE_COLUMN - 2).clearContent();
+  const right = Math.min(oldColumn, lastColumn);
+  if (lastRow > lineLast && right >= LINE_COLUMN) {
+    sheet.getRange(lineLast + 1, LINE_COLUMN, lastRow - lineLast, right - LINE_COLUMN + 1).clearContent();
+  }
+}
+
+/**
+ * Set the number format `@` on the text columns from row 5: D:E, G, P:Q, U,
+ * X, AB, AE, AG:AI, AK, AM, AP, and AR:AU. Also set it on row 4 from column
+ * BA. A name that starts with `=`, `+`, `-`, or `@` then stays text, and a
+ * ticker such as 0700 stays text.
  */
 function setTextFormat(sheet) {
   const dataRows = sheet.getMaxRows() - HEADER_ROW;
   const lastColumn = sheet.getMaxColumns();
-  sheet.getRange(FIRST_DATA_ROW, FUND_COLUMN, dataRows, 2).setNumberFormat("@");
-  sheet.getRange(FIRST_DATA_ROW, FUND_COLUMN + 3, dataRows, 1).setNumberFormat("@");
-  sheet.getRange(FIRST_DATA_ROW, OVERLAP_COLUMN, dataRows, 2).setNumberFormat("@");
-  sheet.getRange(FIRST_DATA_ROW, MIX_COLUMN, dataRows, 1).setNumberFormat("@");
-  sheet.getRange(FIRST_DATA_ROW, MIX_COLUMN + 3, dataRows, 1).setNumberFormat("@");
-  sheet.getRange(FIRST_DATA_ROW, LINE_COLUMN, dataRows, 4).setNumberFormat("@");
+  const text = (column, count) => sheet.getRange(FIRST_DATA_ROW, column, dataRows, count).setNumberFormat("@");
+  text(FUND_COLUMN, 2);
+  text(FUND_COLUMN + 3, 1);
+  text(OVERLAP_COLUMN, 2);
+  text(MIX_COLUMN, 1);
+  text(MIX_COLUMN + 3, 1);
+  text(UNSEEN_COLUMN, 1);
+  text(STOCK_FUND_COLUMN, 1);
+  text(OWN_COLUMN, 3);
+  text(OWN_COLUMN + OWN_FIELDS.indexOf("ownSources"), 1);
+  text(GROUP_COLUMN, 1);
+  text(GROUP_COLUMN + GROUP_FIELDS.indexOf("groupSources"), 1);
+  text(LINE_COLUMN, 4);
   sheet.getRange(HEADER_ROW, SOURCE_COLUMN, 1, lastColumn - SOURCE_COLUMN + 1).setNumberFormat("@");
 }
 
 /**
- * Copy a block of rows into the answer grid. The row and the column are
- * sheet positions, and the grid starts at the sheet position B4.
+ * Copy a block of rows into a grid. The row and the column are sheet
+ * positions. The grid starts at row HEADER_ROW and at the column `first`.
  */
-function placeBlock(grid, row, column, values) {
+function placeBlock(grid, first, row, column, values) {
   values.forEach((cells, r) => {
     cells.forEach((value, c) => {
-      grid[row - HEADER_ROW + r][column - 2 + c] = value;
+      grid[row - HEADER_ROW + r][column - first + c] = value;
     });
   });
 }
 
 /**
- * Write a good answer into the tab. The function grows the grid to fit the
- * rows of the lines and the positions, and sets the text format. Then it
- * writes the range from B4 to the last column and the last row of the grid
- * with one setValues call. The range holds the labels of row 4, the position
- * ids, the measures, the equity measures, the funds, the overlaps, the rows
- * of the mix block, the lines, and the sources. It also holds column B of the
- * run-time block and of the header of the equity block, and the function
- * copies those cells as they are. Each other cell gets an empty string, so
- * no cell of the last answer stays. One call replaces the whole answer, so a
- * report formula never reads an empty block. `mixes` holds the rows of the
- * mix block that mixRows gives.
+ * Write a good answer into the tab with two setValues calls.
+ *
+ * The first call writes the blocks left of the lines block, from B4 to the
+ * column before the lines block and down to the last row of the longest of
+ * those blocks: the labels of row 4, the measures, the equity measures, the
+ * funds, the overlaps, the mix block, the unseen block, the stock fund block,
+ * the own block, and the group block. It also holds column B of the run-time
+ * block and of the header of the equity block, and the function copies those
+ * cells as they are. The second call writes the lines block, the direct
+ * weights, and the sources block, from row 4 down to the last part row and
+ * from AR to the column of the last position. Row 4 of that block holds the
+ * labels and the position ids.
+ *
+ * Before the two calls, the function fits the grid to the rows of the answer
+ * and clears each cell of the last answer outside the two blocks. Each cell
+ * inside a block that the answer does not fill gets an empty string.
+ * `mixes` holds the rows of the mix block that mixRows gives.
  */
 function writeAnswer(sheet, ids, answer, mixes = []) {
   const funds = fundRows(answer.funds);
   const overlaps = overlapRows(answer.overlaps);
   const parts = partRows(answer.lines, ids);
-  const lastRow = Math.max(
+  const direct = directWeights(parts, ids, answer.funds);
+  const unseen = unseenRows(parts, ids, mixes);
+  const stockFunds = stockFundRows(parts, ids, answer.funds);
+  const own = ownRows(parts, ids, direct);
+  const groups = groupRows(parts, ids, direct);
+  const topLast = Math.max(
     EQUITY_HEADER_ROW + EQUITY_NAMES.length,
-    HEADER_ROW + funds.length,
-    HEADER_ROW + overlaps.length,
-    HEADER_ROW + mixes.length,
-    HEADER_ROW + parts.length,
+    ...[funds, overlaps, mixes, unseen, stockFunds, own, groups].map((rows) => HEADER_ROW + rows.length),
   );
-  growGrid(sheet, lastRow, SOURCE_COLUMN - 1 + ids.length);
-  const rows = sheet.getMaxRows() - HEADER_ROW + 1;
-  const width = sheet.getMaxColumns() - 1;
-  const labels = sheet.getRange(HEADER_ROW, 2, 1, width).getValues()[0];
-  const kept = sheet.getRange(RUN_HEADER_ROW, 2, EQUITY_HEADER_ROW - RUN_HEADER_ROW + 1, 1).getValues();
-  const grid = Array.from({ length: rows }, () => new Array(width).fill(""));
-  labels.slice(0, SOURCE_COLUMN - 2).forEach((value, c) => {
-    grid[0][c] = value;
-  });
-  placeBlock(grid, HEADER_ROW, SOURCE_COLUMN, [ids]);
-  placeBlock(grid, FIRST_DATA_ROW, 2, measureRows(answer.measures));
-  placeBlock(grid, RUN_HEADER_ROW, 2, kept);
-  placeBlock(grid, EQUITY_HEADER_ROW + 1, 2, equityRows(answer.measures.equity));
-  placeBlock(grid, FIRST_DATA_ROW, FUND_COLUMN, funds);
-  placeBlock(grid, FIRST_DATA_ROW, OVERLAP_COLUMN, overlaps);
-  placeBlock(grid, FIRST_DATA_ROW, MIX_COLUMN, mixes);
-  placeBlock(grid, FIRST_DATA_ROW, LINE_COLUMN, parts);
+  const lineLast = HEADER_ROW + parts.length;
+  const lastColumn = SOURCE_COLUMN - 1 + ids.length;
+  fitGrid(sheet, Math.max(topLast, lineLast), lastColumn);
+  clearStale(sheet, topLast, lineLast, lastColumn);
   setTextFormat(sheet);
-  sheet.getRange(HEADER_ROW, 2, rows, width).setValues(grid);
+
+  const topWidth = LINE_COLUMN - 2;
+  const top = Array.from({ length: topLast - HEADER_ROW + 1 }, () => new Array(topWidth).fill(""));
+  top[0] = sheet.getRange(HEADER_ROW, 2, 1, topWidth).getValues()[0];
+  const kept = sheet.getRange(RUN_HEADER_ROW, 2, EQUITY_HEADER_ROW - RUN_HEADER_ROW + 1, 1).getValues();
+  placeBlock(top, 2, FIRST_DATA_ROW, 2, measureRows(answer.measures));
+  placeBlock(top, 2, RUN_HEADER_ROW, 2, kept);
+  placeBlock(top, 2, EQUITY_HEADER_ROW + 1, 2, equityRows(answer.measures.equity));
+  placeBlock(top, 2, FIRST_DATA_ROW, FUND_COLUMN, funds);
+  placeBlock(top, 2, FIRST_DATA_ROW, OVERLAP_COLUMN, overlaps);
+  placeBlock(top, 2, FIRST_DATA_ROW, MIX_COLUMN, mixes);
+  placeBlock(top, 2, FIRST_DATA_ROW, UNSEEN_COLUMN, unseen);
+  placeBlock(top, 2, FIRST_DATA_ROW, STOCK_FUND_COLUMN, stockFunds);
+  placeBlock(top, 2, FIRST_DATA_ROW, OWN_COLUMN, own);
+  placeBlock(top, 2, FIRST_DATA_ROW, GROUP_COLUMN, groups);
+  sheet.getRange(HEADER_ROW, 2, top.length, topWidth).setValues(top);
+
+  const labels = sheet.getRange(HEADER_ROW, LINE_COLUMN, 1, SOURCE_COLUMN - LINE_COLUMN).getValues()[0];
+  const lines = parts.map((row, r) => [
+    ...row.slice(0, LINE_FIELDS.length + 1),
+    direct[r],
+    ...row.slice(LINE_FIELDS.length + 1),
+  ]);
+  sheet
+    .getRange(HEADER_ROW, LINE_COLUMN, lines.length + 1, lastColumn - LINE_COLUMN + 1)
+    .setValues([[...labels, ...ids], ...lines]);
 }
 
 /**
@@ -905,7 +1205,7 @@ function unknownIds(book) {
   for (const row of rows) {
     if (row[classAt] !== "unknown" || row[partAt] !== OTHER_PART) continue;
     ids.forEach((id, i) => {
-      const value = row[partAt + 1 + i];
+      const value = row[SOURCE_COLUMN - LINE_COLUMN + i];
       if (id !== "" && isNumber(value) && value > 0) found.add(id);
     });
   }
