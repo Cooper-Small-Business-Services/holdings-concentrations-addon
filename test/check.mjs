@@ -3224,9 +3224,7 @@ function main() {
   check(
     report
       .cell(SPILL_CELL)
-      .includes(
-        ` top,rest,"",\n ${heading("thr")},\n MAKEARRAY(${BAND_ROWS},1,LAMBDA(i,j,"")),\n HSTACK("","Fund overlap"),`,
-      ),
+      .includes(` top,rest,"",\n ${heading("thr")},\n MAKEARRAY(${BAND_ROWS},1,LAMBDA(i,j,"")),\n "Fund overlap",`),
     `${SPILL_CELL} puts the chart header row with the threshold and a band of ${BAND_ROWS} blank rows between the ` +
       "company table and the fund overlap list",
   );
@@ -4447,10 +4445,10 @@ function main() {
     '"A commodity trust or a crypto trust, such as GLD or IBIT, counts as one security.",',
     'HSTACK({"Rank","Company","Ticker","Value","% of portfolio","","Direct"},TRANSPOSE(f)),',
     "top,rest,",
-    'HSTACK("","Fund overlap"),',
-    `HSTACK("","${UNSEEN_TITLE}"),`,
-    'HSTACK("","Other holdings"),',
-    'HSTACK("","Total of all lines",',
+    '"Fund overlap",',
+    `"${UNSEEN_TITLE}",`,
+    '"Other holdings",',
+    'HSTACK("Total of all lines",',
   ];
   const orderAt = order.map((text) => spill.lastIndexOf(text));
   check(
