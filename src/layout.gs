@@ -46,7 +46,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads. The next refresh then replaces the two
  * tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 10;
+const LAYOUT_VERSION = 11;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -464,6 +464,19 @@ const NO_NAME = "No symbol or description";
  * chart holds the text of chartHeading in column A, so the anchor cells of
  * the hidden tab find them.
  *
+ * Each section starts in column A. The report tab formats each column of
+ * the spill, not each section, so each section puts a value in column D and
+ * a share of the portfolio in column E. A title, a note, and a text that
+ * replaces an empty list are in column A. The fund overlap list holds the two
+ * funds in A and B, and the overlap, the count of shared securities, and the
+ * weight of each fund in E to H. The section of the funds not looked through
+ * holds the holding, the fund in the mix, the value, the share, and the note
+ * in A, B, D, E, and F. The section of the other holdings holds the line,
+ * the kind, the value, the share, and the funds that the line came from in
+ * A, B, D, E, and F. The total of all lines holds its label in A, the value
+ * in D, and the share in E. The columns between the text and column D are
+ * empty.
+ *
  * The section Holdings reads the Holdings tab alone, so it changes with
  * no refresh. Each Holdings row with a number in Value goes into the group of
  * its key: its Symbol, or its Description when the Symbol is empty, cut to 64
@@ -613,16 +626,16 @@ smallRow,HSTACK("Other small holdings inside funds ("&TEXT(SUM(FILTER(gn,sm)),"#
  TEXTJOIN(", ",TRUE,FILTER(gk,sm)),SUM(FILTER(gw,sm))*tot,SUM(FILTER(gw,sm)),
  IFERROR(TEXTJOIN(", ",TRUE,UNIQUE(TRANSPOSE(ARRAYFORMULA(TRIM(SPLIT(TEXTJOIN(",",TRUE,FILTER(gf,sm)),",")))))),"")),
 main,IF(nown=0,FILTER(grpAll,big),IF(ng=0,ownRows,VSTACK(ownRows,FILTER(grpAll,big)))),
-nis,IF(nown+ng=0,IF(nsm=0,"No holding other than securities.",smallRow),
+nis,IF(nown+ng=0,IF(nsm=0,{"No holding other than securities.","","","",""},smallRow),
  IF(nsm=0,SORT(main,4,FALSE),VSTACK(SORT(main,4,FALSE),smallRow))),
 blank,MAKEARRAY(ROWS(nis),1,LAMBDA(i,j,"")),
 pa,${column(x.pairFirst)},pb,${column(x.pairSecond)},po,${column(x.pairOverlap)},pn,${column(x.pairShared)},
 fw,${column(x.fundWeight)},
 pwt,LAMBDA(v,IFNA(XLOOKUP(v,MI,MW),XLOOKUP(v,${column(x.fundId)},fw,""))),
 psel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$${OVERLAP_ROW})),
-plist,IF(SUM(psel)=0,HSTACK("","No pair of funds is at or above the overlap minimum."),
+plist,IF(SUM(psel)=0,"No pair of funds is at or above the overlap minimum.",
  LET(qa,FILTER(pa,psel),qb,FILTER(pb,psel),gap,MAKEARRAY(ROWS(qa),1,LAMBDA(i,j,"")),
-  HSTACK(gap,qa,qb,gap,FILTER(po,psel),FILTER(pn,psel),
+  HSTACK(qa,qb,gap,gap,FILTER(po,psel),FILTER(pn,psel),
    MAP(qa,LAMBDA(v,pwt(v))),MAP(qb,LAMBDA(v,pwt(v)))))),
 IFNA(VSTACK("${HOLDINGS_TITLE}",
  {${HOLDING_COLUMNS.map((text) => `"${text}"`).join(",")}},
@@ -635,21 +648,21 @@ IFNA(VSTACK("${HOLDINGS_TITLE}",
  top,rest,"",
  ${chartHeading("thr")},
  MAKEARRAY(${CHART_BAND_ROWS},1,LAMBDA(i,j,"")),
- HSTACK("","Fund overlap"),
- HSTACK("","${OVERLAP_NOTE}"),
- {"","Fund 1","Fund 2","","Overlap","Shared securities","Fund 1 weight","Fund 2 weight"},
+ "Fund overlap",
+ "${OVERLAP_NOTE}",
+ {"Fund 1","Fund 2","","","Overlap","Shared securities","Fund 1 weight","Fund 2 weight"},
  plist,
  "",
- HSTACK("","${UNSEEN_TITLE}"),
- {"","Holding","Fund in the mix","Value","% of portfolio","Note"},
- HSTACK(cb,can),
+ "${UNSEEN_TITLE}",
+ {"Holding","Fund in the mix","","Value","% of portfolio","Note"},
+ HSTACK(CHOOSECOLS(can,1,2),cb,CHOOSECOLS(can,3,4,5)),
  "",
- HSTACK("","${OTHER_TITLE}"),
- {"","Line","Kind","Value","% of portfolio","Came from"},
- HSTACK(blank,nis),
+ "${OTHER_TITLE}",
+ {"Line","Kind","","Value","% of portfolio","Came from"},
+ HSTACK(CHOOSECOLS(nis,1,2),blank,CHOOSECOLS(nis,3,4,5)),
  "",
- HSTACK("","Total of all lines","",SUM(pw)*tot,SUM(pw)),
- HSTACK("","${SUM_NOTE}")),""))`;
+ HSTACK("Total of all lines","","",SUM(pw)*tot,SUM(pw)),
+ "${SUM_NOTE}"),""))`;
 }
 
 /**
@@ -1322,25 +1335,25 @@ function reportLayout(inputs = {}) {
       },
       {
         range: spill,
-        formula: `=OR($A${first}="${HOLDINGS_TITLE}",$A${first}="${HOLDINGS_HEADING}",$A${first}=${chartHeading(`$B$${THRESHOLD_ROW}`)},$B${first}="Fund overlap",$B${first}="${UNSEEN_TITLE}",$B${first}="${OTHER_TITLE}")`,
+        formula: `=OR($A${first}="${HOLDINGS_TITLE}",$A${first}="${HOLDINGS_HEADING}",$A${first}=${chartHeading(`$B$${THRESHOLD_ROW}`)},$A${first}="Fund overlap",$A${first}="${UNSEEN_TITLE}",$A${first}="${OTHER_TITLE}")`,
         bold: true,
       },
       {
         range: spill,
         formula:
           `=OR(AND($A${first}="Holding",$B${first}="Ticker"),AND($A${first}="Rank",$B${first}="Company"),` +
-          `$B${first}="Fund 1",AND($B${first}="Holding",$C${first}="Fund in the mix"),$B${first}="Line")`,
+          `AND($A${first}="Fund 1",$B${first}="Fund 2"),AND($A${first}="Holding",$B${first}="Fund in the mix"),AND($A${first}="Line",$B${first}="Kind"))`,
         bold: true,
         background: "#f7f6f1",
       },
       {
         range: spill,
-        formula: `=OR(AND($A${first}="Total",$B${first}="",$C${first}=""),$B${first}="Total of all lines")`,
+        formula: `=OR(AND($A${first}="Total",$B${first}="",$C${first}="",$F${first}=""),$A${first}="Total of all lines")`,
         bold: true,
       },
       {
         range: spill,
-        formula: `=OR($A${first}="${TRUST_NOTE}",$B${first}="${OVERLAP_NOTE}",$B${first}="${SUM_NOTE}")`,
+        formula: `=OR($A${first}="${TRUST_NOTE}",$A${first}="${OVERLAP_NOTE}",$A${first}="${SUM_NOTE}")`,
         color: "#6b6962",
         italic: true,
       },
