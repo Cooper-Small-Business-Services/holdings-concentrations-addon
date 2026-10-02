@@ -3296,6 +3296,36 @@ function main() {
     report.cell(SPILL_CELL).includes('SPARKLINE(x,{"charttype","bar";"max",mx;"color1","#2a78d6"})'),
     "the company table keeps its column of SPARKLINE bars",
   );
+  check(
+    report.cell(SPILL_CELL).includes('rest,HSTACK(SUM(sel)+1,"Securities under "'),
+    "the row of the securities under the threshold holds the next rank, the count of the company rows plus 1",
+  );
+  const reportRules = JSON.parse(created[REPORT_TAB]).rules;
+  const restRules = reportRules.filter((rule) => rule.formula === '=LEFT($B26,17)="Securities under "');
+  check(
+    restRules.length === 1 &&
+      restRules[0].background === undefined &&
+      restRules[0].italic === true &&
+      restRules[0].color === "#3c3b37",
+    "the row of the securities under the threshold is italic, with no background",
+  );
+  check(
+    reportRules.some(
+      (rule) =>
+        rule.bold === true &&
+        rule.formula === '=AND(ISNUMBER($A26),LEFT($B26,17)<>"Securities under ",N($G26)>0,SUM($H26:$Z26)>0)',
+    ),
+    "the bold rule of column B holds no row of the securities under the threshold",
+  );
+  check(
+    [...chartHeader.slice(1), ...chartRow].every((formula) =>
+      formula.includes(
+        "wb,CHOOSEROWS('Concentration'!$B$26:$B,SEQUENCE(ROWS(w),1,h+1)),\n" +
+          'm,SUMPRODUCT((w=SEQUENCE(ROWS(w)))*(LEFT(wb,17)<>"Securities under ")*1),',
+      ),
+    ),
+    "m of each formula of the chart block counts no row of the securities under the threshold",
+  );
 
   check(
     vm.runInContext("HOLDINGS_CHART_COLUMN", context) === HOLDINGS_AT &&

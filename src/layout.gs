@@ -46,7 +46,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads. The next refresh then replaces the two
  * tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 11;
+const LAYOUT_VERSION = 12;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -501,7 +501,8 @@ const NO_NAME = "No symbol or description";
  * is a row of the stock part with a stock weight at or above the threshold,
  * whatever the class of the line. The source cells of that row are the stock
  * part of each source, so the Direct column and the fund columns add up to
- * the row.
+ * the row. The row of the securities under the threshold follows the company
+ * rows with the next rank, the count of the company rows plus 1.
  *
  * The section of the funds not looked through gives one row to each holding
  * with no mix whose lines of the class unknown hold UNSEEN_FLOOR or more of
@@ -575,7 +576,7 @@ rsel,ARRAYFORMULA((LP="${STOCK_PART}")*ISNUMBER(LX)*(LX<thr)),
 rw,SUMIFS(LX,LP,"${STOCK_PART}",LX,"<"&thr),
 rc,COUNTIFS(LP,"${STOCK_PART}",LX,"<"&thr,LX,"<>0"),
 rf,MAP(f,LAMBDA(x,IFERROR(SUMIFS(INDEX(LS,0,XMATCH(x,LH)),LP,"${STOCK_PART}",LX,"<"&thr),0))),
-rest,HSTACK("","Securities under "&TEXT(thr,"0.00%")&" ("&TEXT(rc,"#,##0")&")","",rw*tot,rw,"",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),
+rest,HSTACK(SUM(sel)+1,"Securities under "&TEXT(thr,"0.00%")&" ("&TEXT(rc,"#,##0")&")","",rw*tot,rw,"",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),
 ${unseenNames()}
 cx,{"","","","","","","x"},
 cu,LET(q,IFNA(FILTER(uid,uu>=${floor}),""),
@@ -737,9 +738,10 @@ function holdingsAnchorFormula() {
  * refresh. h is the row of the header of the company table inside the
  * spill: the row with Rank in column A and Company in column B. The company
  * rows under it hold the rank 1, 2, 3, and so on in column A, largest first.
- * m counts those rows, up to CHART_ROWS. A data row shows the company of its
- * rank r: its row minus HEADER_ROW. A data row with no company of its rank
- * is blank.
+ * The row of the securities under the threshold holds the next rank and is
+ * not a company row. m counts the company rows, up to CHART_ROWS. A data
+ * row shows the company of its rank r: its row minus HEADER_ROW. A data row
+ * with no company of its rank is blank.
  *
  * g holds the fund columns of the company rows, and s holds the sum of each
  * fund column. The order o puts the funds with a sum other than 0 first,
@@ -764,7 +766,8 @@ function chartFormulas() {
   const find = `sa,${spill("A")},
 h,XMATCH(1,ARRAYFORMULA((sa="${COMPANY_COLUMNS[0]}")*(${company("Company")}="Company"))),
 w,CHOOSEROWS(sa,SEQUENCE(MIN(${CHART_ROWS},ROWS(sa)-h),1,h+1)),
-m,SUMPRODUCT((w=SEQUENCE(ROWS(w)))*1),`;
+wb,CHOOSEROWS(${company("Company")},SEQUENCE(ROWS(w),1,h+1)),
+m,SUMPRODUCT((w=SEQUENCE(ROWS(w)))*(LEFT(wb,17)<>"Securities under ")*1),`;
   const rank = `g,CHOOSEROWS(${funds},SEQUENCE(m,1,h+1)),
 s,BYCOL(g,LAMBDA(c,SUM(c))),
 z,ARRAYFORMULA((s<>0)*1),
@@ -1329,7 +1332,6 @@ function reportLayout(inputs = {}) {
       {
         range: spill,
         formula: `=LEFT($B${first},17)="Securities under "`,
-        background: "#f4f3ee",
         color: "#3c3b37",
         italic: true,
       },
@@ -1364,7 +1366,7 @@ function reportLayout(inputs = {}) {
       },
       {
         range: `B${first}:B`,
-        formula: `=AND(ISNUMBER($A${first}),N($G${first})>0,SUM($H${first}:$${last}${first})>0)`,
+        formula: `=AND(ISNUMBER($A${first}),LEFT($B${first},17)<>"Securities under ",N($G${first})>0,SUM($H${first}:$${last}${first})>0)`,
         bold: true,
       },
     ],
