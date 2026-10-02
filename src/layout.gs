@@ -15,21 +15,25 @@
  * overlap minimum. The formulas read Concentration.Exposure and the Holdings
  * tab.
  *
- * The hidden tab also holds the chart block after the sources block, and
- * the anchor cell after the chart block. Each cell of the block is a
- * formula that reads the company table of the report spill. The anchor cell
- * holds the row of the report tab where the bar chart starts: the first row
- * of the band of blank rows under the chart header row of the report spill.
- * drawChart draws the bar chart from the block at that row. Each good
- * refresh calls it, and onEdit calls it after an edit of the threshold cell.
+ * The hidden tab also holds two chart blocks after the sources block, each
+ * with an anchor cell after it. Each cell of the company chart block is a
+ * formula that reads the company table of the report spill. Each cell of
+ * the holdings chart block is a formula that reads the section
+ * Holdings of the report spill. An anchor cell holds the row of the report
+ * tab where its bar chart starts: the first row of the band of blank rows
+ * under the chart header row of that chart in the report spill.
+ * drawBlockChart draws a bar chart from its block at that row. Each good
+ * refresh draws both charts. onEdit draws the company chart alone, after an
+ * edit of the threshold cell.
  *
  * A refresh calls ensureTabs before the request. The function compares the
  * layout version of the hidden tab with LAYOUT_VERSION. When the two are
  * equal, it creates the report tab if that tab is absent. When they differ,
  * or when the hidden tab is absent, it replaces both tabs and keeps the two
  * values that the person typed. Each time it replaces a tab, its last step
- * writes the chart block and the anchor cell, after both tabs exist. Delete
- * the hidden tab to get the layout of both tabs again on the next refresh.
+ * writes the chart blocks and the anchor cells, after both tabs exist.
+ * Delete the hidden tab to get the layout of both tabs again on the next
+ * refresh.
  */
 
 /**
@@ -42,7 +46,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads. The next refresh then replaces the two
  * tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 8;
+const LAYOUT_VERSION = 10;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -99,9 +103,9 @@ const THRESHOLD_ROW = 23;
 const OVERLAP_ROW = 24;
 
 /**
- * The row of the report spill. The spill holds the section Your holdings,
+ * The row of the report spill. The spill holds the section Holdings,
  * the header of the company table, the company table, and each section under
- * it. The row count of the section Your holdings changes with the Holdings
+ * it. The row count of the section Holdings changes with the Holdings
  * tab, so the header of the company table is inside the spill.
  */
 const REPORT_ROW = 26;
@@ -131,7 +135,7 @@ const MIX_AGE_DAYS = 182;
  * groups of the Holdings tab, above it.
  */
 const OTHER_TITLE = "Other holdings";
-const HOLDINGS_TITLE = "Your holdings";
+const HOLDINGS_TITLE = "Holdings";
 
 /**
  * The disclaimer of the report tab, in B1.
@@ -155,13 +159,21 @@ const FUND_LAST_ROW = REPORT_ROW - 1;
 const COMPANY_COLUMNS = ["Rank", "Company", "Ticker", "Value", "% of portfolio", "", "Direct"];
 
 /**
- * The colors of the series of the bar chart: one for Direct, one for each of
- * the CHART_FUNDS funds in rank order, and one gray for Other funds. The
- * colors are fixed, so the largest fund always gets the first fund color.
- * Each pair of fund colors differs in OKLCH lightness by 0.06 or more. Each
- * two neighbors of the stack, from Direct to Other funds, differ by an OKLab
- * distance of 8 or more under simulated protan vision and simulated deutan
- * vision, and by 15 or more under normal vision.
+ * The header of the table of the section Holdings of the report spill,
+ * from column A. The holdings chart block finds the Holding, the Ticker, the
+ * Accounts, and the % of portfolio columns by this list.
+ */
+const HOLDING_COLUMNS = ["Holding", "Ticker", "Accounts", "Value", "% of portfolio"];
+
+/**
+ * The colors of the series of the company chart: one for Direct, one for each
+ * of the CHART_FUNDS funds in rank order, and one gray for Other funds. The
+ * one series of the holdings chart has the Direct color. The colors are
+ * fixed, so the largest fund always gets the first fund color. Each pair of
+ * fund colors differs in OKLCH lightness by 0.06 or more. Each two neighbors
+ * of the stack, from Direct to Other funds, differ by an OKLab distance of 8
+ * or more under simulated protan vision and simulated deutan vision, and by
+ * 15 or more under normal vision.
  */
 const CHART_DIRECT_COLOR = "#2a78d6";
 const CHART_FUND_COLORS = ["#f26e3b", "#037952", "#eba007", "#c75d87", "#036503"];
@@ -173,33 +185,43 @@ const CHART_OTHER_COLOR = "#a9a7a0";
 const REPORT_WIDTHS = { A: 250, B: 300, C: 150, D: 175, E: 110, F: 180 };
 
 /**
- * The size of the bar chart in pixels, and the count of blank rows of the
- * band that the report spill holds for the chart. The chart spans the
- * columns A to D of the report tab. The band holds the height of the chart
- * at the default row height of 21 pixels, and one more row as a margin.
+ * The size of each bar chart in pixels, and the count of blank rows of the
+ * band that the report spill holds for each chart. A chart spans the columns
+ * A to D of the report tab. A band holds the height of a chart at the
+ * default row height of 21 pixels, and one more row as a margin.
  */
 const CHART_WIDTH = REPORT_WIDTHS.A + REPORT_WIDTHS.B + REPORT_WIDTHS.C + REPORT_WIDTHS.D;
 const CHART_HEIGHT = 520;
 const CHART_BAND_ROWS = Math.ceil(CHART_HEIGHT / 21) + 1;
 
 /**
- * The largest length of the series name of a fund. A fund with no symbol
- * has its description as its id, and the name is the start of it.
+ * The largest length of the series name of a fund of the company chart. A
+ * fund with no symbol has its description as its id, and the name is the
+ * start of it. The holdings chart cuts the label of a holding group with no
+ * ticker to the same length.
  */
 const CHART_NAME_LENGTH = 24;
 
 /**
- * The parts of the text of the chart header row of the report spill: the
- * text before the threshold, the count of decimals of the threshold as a
- * percent, and the text after it. chartHeading builds the expression of the
- * spill formula from these parts, and headingText builds the text that
- * drawChart expects in that row, so the two texts agree.
+ * The parts of the text of the header row of the company chart in the report
+ * spill: the text before the threshold, the count of decimals of the
+ * threshold as a percent, and the text after it. chartHeading builds the
+ * expression of the spill formula from these parts, and headingText builds
+ * the text that drawChart expects in that row, so the two texts agree.
  */
 const CHART_HEADING = { before: "Companies at or over ", decimals: 2, after: " of the portfolio, by source" };
 
 /**
- * The time in milliseconds that drawChart waits before it reads the anchor
- * cell again, and the largest total time of the wait.
+ * The text of the header row of the holdings chart in the report spill. The
+ * text is fixed. The holdings anchor cell finds it in column A of the
+ * report tab, and drawHoldingsChart expects it in the row above the anchor
+ * row.
+ */
+const HOLDINGS_HEADING = "Holdings by share of the portfolio";
+
+/**
+ * The time in milliseconds that drawBlockChart waits before it reads an
+ * anchor cell again, and the largest total time of the wait.
  */
 const CHART_WAIT_STEP = 500;
 const CHART_WAIT_LIMIT = 20000;
@@ -342,7 +364,7 @@ function equityFormula(name) {
  * equity block. The cell is empty before the first good refresh.
  */
 function noStockFormula() {
-  return `=IF(AND(ISNUMBER(${measureCell("lineCount")}),NOT(ISNUMBER(${equityCell("weight")}))),"Your portfolio holds no securities.","")`;
+  return `=IF(AND(ISNUMBER(${measureCell("lineCount")}),NOT(ISNUMBER(${equityCell("weight")}))),"Portfolio holds no securities.","")`;
 }
 
 /**
@@ -380,7 +402,7 @@ IF(n=0,"",n&IF(n=1," holding ("," holdings (")&IF(s<0.01,"less than 1%",TEXT(s,"
  */
 function coverageFormula() {
   const cell = measureCell("unknownWeight");
-  return `=IF(ISNUMBER(${cell}),"These measures cover "&TEXT(1-${cell},"0.0%")&" of your portfolio.","")`;
+  return `=IF(ISNUMBER(${cell}),"These measures cover "&TEXT(1-${cell},"0.0%")&" of the portfolio.","")`;
 }
 
 /**
@@ -422,7 +444,7 @@ const OVERLAP_NOTE = "Overlap is the part of the two funds that sits in the same
 const TRUST_NOTE = "A commodity trust or a crypto trust, such as GLD or IBIT, counts as one security.";
 
 /**
- * The text of the section Your holdings when the Holdings tab holds no
+ * The text of the section Holdings when the Holdings tab holds no
  * Symbol, Description, or Value column, and the name of a group of rows with
  * an empty Symbol and an empty Description.
  */
@@ -431,15 +453,18 @@ const NO_NAME = "No symbol or description";
 
 /**
  * The formula of the report spill, in column A of row REPORT_ROW. The spill
- * holds these blocks from the top: the section Your holdings, the note on
- * trusts, the header of the company table, the company table, the chart
- * header row, the band of CHART_BAND_ROWS blank rows under which the bar
- * chart sits, the fund overlap list, the section of the funds not looked
- * through, the section of the other holdings, and the total. The chart
- * header row holds the text of chartHeading in column A, so the anchor cell
- * of the hidden tab finds it.
+ * holds these blocks from the top: the section Holdings, the header row
+ * of the holdings chart, the band of CHART_BAND_ROWS blank rows in which the
+ * holdings chart sits, the note on trusts, the header of the company table,
+ * the company table, the header row of the company chart, the band of
+ * CHART_BAND_ROWS blank rows in which the company chart sits, the fund
+ * overlap list, the section of the funds not looked through, the section of
+ * the other holdings, and the total. The header row of the holdings chart
+ * holds HOLDINGS_HEADING in column A, and the header row of the company
+ * chart holds the text of chartHeading in column A, so the anchor cells of
+ * the hidden tab find them.
  *
- * The section Your holdings reads the Holdings tab alone, so it changes with
+ * The section Holdings reads the Holdings tab alone, so it changes with
  * no refresh. Each Holdings row with a number in Value goes into the group of
  * its key: its Symbol, or its Description when the Symbol is empty, cut to 64
  * characters, as buildPositions makes it. EXACT compares the keys, so two
@@ -576,7 +601,7 @@ grp,ARRAYFORMULA(ISNUMBER(${column(x.groupWeight)})*1),
 cls,FILTER(${column(x.groupClass)},grp),
 gw,FILTER(${column(x.groupWeight)},grp),
 gn,FILTER(${column(x.groupCount)},grp),
-gl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,"stock","Bonds of companies whose stock you hold","fund","Funds held by your funds, not looked through","cash","Cash and money market funds inside funds","derivative","Derivatives inside funds","treasury","Treasury securities inside funds","other","Other holdings inside funds",x&" inside funds")&" ("&TEXT(m,"#,##0")&")")),
+gl,MAP(cls,gn,LAMBDA(x,m,SWITCH(x,"stock","Bonds of companies whose stock you hold","fund","Funds held by the funds, not looked through","cash","Cash and money market funds inside funds","derivative","Derivatives inside funds","treasury","Treasury securities inside funds","other","Other holdings inside funds",x&" inside funds")&" ("&TEXT(m,"#,##0")&")")),
 gk,MAP(cls,LAMBDA(x,SWITCH(x,"stock","bond or other security","fund","fund, not looked through",x))),
 gf,FILTER(${column(x.groupSources)},grp),
 grpAll,HSTACK(gl,gk,ARRAYFORMULA(gw*tot),gw,gf),
@@ -600,9 +625,11 @@ plist,IF(SUM(psel)=0,HSTACK("","No pair of funds is at or above the overlap mini
   HSTACK(gap,qa,qb,gap,FILTER(po,psel),FILTER(pn,psel),
    MAP(qa,LAMBDA(v,pwt(v))),MAP(qb,LAMBDA(v,pwt(v)))))),
 IFNA(VSTACK("${HOLDINGS_TITLE}",
- {"Holding","Ticker","Accounts","Value","% of portfolio"},
+ {${HOLDING_COLUMNS.map((text) => `"${text}"`).join(",")}},
  yours,
  "",
+ "${HOLDINGS_HEADING}",
+ MAKEARRAY(${CHART_BAND_ROWS},1,LAMBDA(i,j,"")),
  "${TRUST_NOTE}",
  HSTACK({${COMPANY_COLUMNS.map((text) => `"${text}"`).join(",")}},TRANSPOSE(f)),
  top,rest,"",
@@ -661,11 +688,12 @@ function sameHeading(shown, heading) {
 }
 
 /**
- * The formula of the anchor cell of the tab Concentration.Exposure: the row
- * of the report tab under the chart header row of the report spill, which
- * is the first row of the band. The formula finds the text of the chart
- * header row in column A of the report tab, with the threshold cell, and
- * adds 1. The cell is empty when no row holds the text.
+ * The formula of the anchor cell of the company chart, in the tab
+ * Concentration.Exposure: the row of the report tab under the header row of
+ * the company chart in the report spill, which is the first row of the band.
+ * The formula finds the text of the chart header row in column A of the
+ * report tab, with the threshold cell, and adds 1. The cell is empty when no
+ * row holds the text.
  */
 function anchorFormula() {
   const heading = chartHeading(`'${REPORT_TAB}'!$B$${THRESHOLD_ROW}`);
@@ -673,12 +701,23 @@ function anchorFormula() {
 }
 
 /**
- * The formulas of the chart block of the tab Concentration.Exposure: the
- * header row, and the row that each of the CHART_ROWS data rows holds. The
- * columns are the company name, Direct, CHART_FUNDS fund columns, and Other
- * funds. The header cells hold the series names. A header cell that holds
- * an empty string marks a column with no series. writeChartBlock writes the
- * formulas.
+ * The formula of the holdings anchor cell of the tab Concentration.Exposure:
+ * the row of the report tab under the header row of the holdings chart in
+ * the report spill, which is the first row of its band. The formula finds
+ * HOLDINGS_HEADING in column A of the report tab and adds 1. The cell is
+ * empty when no row holds the text.
+ */
+function holdingsAnchorFormula() {
+  return `=IFERROR(XMATCH("${HOLDINGS_HEADING}",'${REPORT_TAB}'!$A:$A)+1,"")`;
+}
+
+/**
+ * The formulas of the company chart block of the tab Concentration.Exposure:
+ * the header row, and the row that each of the CHART_ROWS data rows holds.
+ * The columns are the company name, Direct, CHART_FUNDS fund columns, and
+ * Other funds. The header cells hold the series names. A header cell that
+ * holds an empty string marks a column with no series. writeChartBlock writes
+ * the formulas.
  *
  * Each formula reads the company table of the report spill alone, so a
  * change of the threshold or of the Holdings tab changes the block with no
@@ -756,7 +795,60 @@ IF(nz<=${CHART_FUNDS},"",SUM(MAP(SEQUENCE(n),LAMBDA(j,IF(XMATCH(j,o)>${CHART_FUN
 }
 
 /**
- * The color of the series of the column at an offset of the chart block.
+ * The formulas of the holdings chart block of the tab Concentration.Exposure:
+ * the header row, and the row that each of the HOLDINGS_CHART_ROWS data rows
+ * holds. The columns are the label of each holding group and its share of the
+ * portfolio. The header cell of the share column holds the series name. When
+ * it holds an empty string, the block has no series. writeChartBlock writes
+ * the formulas.
+ *
+ * Each formula reads the section Holdings of the report spill alone,
+ * so a change of the Holdings tab changes the block with no refresh. h is
+ * the row of the header of the table of the section inside the spill: the
+ * row with Holding in column A and Ticker in column B. The group rows under
+ * it hold the count of accounts, a number, in column C, in the order of the
+ * table, largest value first. The Total row and a note row hold no number
+ * there. m counts the rows with a number in column C from row h + 1 up to
+ * the first row with no number, HOLDINGS_CHART_ROWS at most. A data row
+ * shows the group at place r of the table: its row minus HEADER_ROW. A data
+ * row with no group at its place is blank.
+ *
+ * The label is the Ticker of the group, or the Holding cut to
+ * CHART_NAME_LENGTH characters when the Ticker is empty. The share is the %
+ * of portfolio of the group. The header of the share column is empty when
+ * the table holds no group, or when no group has a share, as when the total
+ * value cell holds no number.
+ */
+function holdingsChartFormulas() {
+  const spill = (name) => {
+    const letter = columnLetter(HOLDING_COLUMNS.indexOf(name) + 1);
+    return `'${REPORT_TAB}'!$${letter}$${REPORT_ROW}:$${letter}`;
+  };
+  const share = spill("% of portfolio");
+  const row = `r,ROW()-${HEADER_ROW},`;
+  const find = `sa,${spill("Holding")},
+h,XMATCH(1,ARRAYFORMULA((sa="${HOLDING_COLUMNS[0]}")*(${spill("Ticker")}="${HOLDING_COLUMNS[1]}"))),
+w,CHOOSEROWS(${spill("Accounts")},SEQUENCE(MIN(${HOLDINGS_CHART_ROWS},ROWS(sa)-h),1,h+1)),
+m,IFNA(XMATCH(0,ARRAYFORMULA(ISNUMBER(w)*1)),ROWS(w)+1)-1,`;
+  const cell = (body) => `=IFERROR(LET(${body}),"")`;
+  return {
+    header: [
+      `="${HOLDING_COLUMNS[0]}"`,
+      cell(`${find}
+IF(m=0,"",IF(COUNT(CHOOSEROWS(${share},SEQUENCE(m,1,h+1)))=0,"","${HOLDING_COLUMNS[4]}"))`),
+    ],
+    row: [
+      cell(`${row}${find}
+IF(r>m,"",IF(INDEX(${spill("Ticker")},h+r)<>"",INDEX(${spill("Ticker")},h+r),LEFT(INDEX(sa,h+r),${CHART_NAME_LENGTH})))`),
+      cell(`${row}${find}
+IF(r>m,"",INDEX(${share},h+r))`),
+    ],
+  };
+}
+
+/**
+ * The color of the series of the column at an offset of the company chart
+ * block.
  */
 function seriesColor(offset) {
   if (offset === 1) return CHART_DIRECT_COLOR;
@@ -765,93 +857,161 @@ function seriesColor(offset) {
 }
 
 /**
- * Draw the bar chart of the report tab again from the chart block of the tab
- * Concentration.Exposure. A good refresh and onEdit call this function. It
- * uses the spreadsheet alone, and it sends no request. `threshold` is the
+ * The two bar charts of the report tab. Each one names its block of the tab
+ * Concentration.Exposure: the first column, the count of columns, and the
+ * count of data rows under the header row HEADER_ROW. It also names the
+ * column of its anchor cell, a name for the log, the color of the series of
+ * each column offset of the block, the stacking, the position of the
+ * legend, and the other options of setOption.
+ *
+ * The company chart stacks the series and puts the legend at the top. The
+ * total data label of a stacked chart shows the share of each company at
+ * the end of its bar. The value of a segment shows on hover alone.
+ *
+ * The holdings chart has one series and no legend. The data label of the
+ * series shows the share of each holding group at the end of its bar, with
+ * the number format of the block.
+ */
+function companyChart() {
+  return {
+    name: "company",
+    column: CHART_COLUMN,
+    width: CHART_BLOCK_WIDTH,
+    rows: CHART_ROWS,
+    anchor: ANCHOR_COLUMN,
+    color: seriesColor,
+    stacked: true,
+    legend: "top",
+    options: { "annotations.total.enabled": true },
+  };
+}
+
+/**
+ * The holdings chart. companyChart states the fields.
+ */
+function holdingsChart() {
+  return {
+    name: "holdings",
+    column: HOLDINGS_CHART_COLUMN,
+    width: HOLDINGS_BLOCK_WIDTH,
+    rows: HOLDINGS_CHART_ROWS,
+    anchor: HOLDINGS_ANCHOR_COLUMN,
+    color: () => CHART_DIRECT_COLOR,
+    stacked: false,
+    legend: "none",
+    options: { series: { 0: { dataLabel: "value", dataLabelPlacement: "outsideEnd", hasAnnotations: true } } },
+  };
+}
+
+/**
+ * Draw the company chart of the report tab again from the company chart
+ * block. A good refresh and onEdit call this function. `threshold` is the
  * threshold that the report spill must show, a share from 0 to 1: the
  * refresh gives the value of readInputs, and onEdit gives the value of the
- * edit.
+ * edit. The header row of the company chart holds the threshold, so the
+ * function waits for the text of headingText of that threshold.
+ */
+function drawChart(book, threshold) {
+  drawBlockChart(book, companyChart(), headingText(threshold));
+}
+
+/**
+ * Draw the holdings chart of the report tab again from the holdings chart
+ * block. A good refresh calls this function. The header row of the holdings
+ * chart holds HOLDINGS_HEADING, so the function waits for that text.
+ */
+function drawHoldingsChart(book) {
+  drawBlockChart(book, holdingsChart(), HOLDINGS_HEADING);
+}
+
+/**
+ * Draw one bar chart of the report tab again from its block of the tab
+ * Concentration.Exposure. `chart` is companyChart or holdingsChart, and
+ * `heading` is the text that the header row of the chart in the report
+ * spill must show. The function uses the spreadsheet alone, and it sends no
+ * request.
  *
  * The function changes nothing when a tab is absent, or when the hidden tab
  * holds another layout version. Else it calls SpreadsheetApp.flush, so the
  * block and the anchor cell show the values of the current answer and the
- * current threshold. Then freshAnchorRow reads the anchor cell and the
- * chart header row above it. The anchor cell is a formula on the report
+ * current cells. Then freshAnchorRow reads the anchor cell of the chart and
+ * the header row above it. The anchor cell is a formula on the report
  * spill, and a read right after an edit can run ahead of the calculation of
- * the spill and give the row of the old threshold. So freshAnchorRow
- * compares the chart header row with headingText of the threshold, and
- * waits and reads again while the two differ, for up to CHART_WAIT_LIMIT
- * milliseconds. When the text never matches, the function changes no chart
- * and logs one warning.
+ * the spill and give an old row. So freshAnchorRow compares the header row
+ * with `heading`, and waits and reads again while the two differ, for up to
+ * CHART_WAIT_LIMIT milliseconds. When the text never matches, the function
+ * changes no chart and logs one warning.
  *
  * Then the function reads the header row of the block. Each column of the
- * block after the first one whose header cell holds a text is a series:
- * Direct, a fund column, or Other funds. The first column gives the company
- * names. Each range of the chart runs from the header row to the last data
- * row of the block, so it never moves.
+ * block after the first one whose header cell holds a text is a series. The
+ * first column gives the bar labels. Each range of the chart runs from the
+ * header row to the last data row of the block, so it never moves.
  *
  * The function builds the new chart first. Then it removes each chart of the
- * report tab that reads the tab Concentration.Exposure, and it inserts the
- * new chart. So one chart stays, and an error of the build keeps the old
- * chart. When no header cell after the first one holds a text, the function
- * removes the old chart and inserts none.
+ * report tab that reads a column of this block, and it inserts the new
+ * chart. So one chart of each block stays, the chart of the other block
+ * stays, and an error of the build keeps the old chart. When no header cell
+ * after the first one holds a text, the function removes the old chart of
+ * the block and inserts none.
  *
  * The chart anchors at column A of the row in the anchor cell. It spans the
- * columns A to D, it is CHART_HEIGHT pixels high, and it has no title. It
- * stacks the series and puts the legend at the top. The total data label of
- * a stacked chart shows the share of each company at the end of its bar.
- * The value of a segment shows on hover alone. The axis shows the share of
- * the portfolio with the number format 0%.
+ * columns A to D, it is CHART_HEIGHT pixels high, and it has no title. The
+ * axis shows the share of the portfolio with the number format 0%.
  */
-function drawChart(book, threshold) {
+function drawBlockChart(book, chart, heading) {
   const report = book.getSheetByName(REPORT_TAB);
   const hidden = book.getSheetByName(EXPOSURE_TAB);
   if (report === null || hidden === null || hidden.getRange(VERSION_CELL).getValue() !== LAYOUT_VERSION) return;
   SpreadsheetApp.flush();
-  const heading = headingText(threshold);
-  const row = freshAnchorRow(report, hidden, heading);
+  const row = freshAnchorRow(report, hidden, chart.anchor, heading);
   if (row === null) {
-    console.warn(`The chart did not change: no row of the report showed "${heading}" in ${CHART_WAIT_LIMIT / 1000} s.`);
+    console.warn(
+      `The ${chart.name} chart did not change: no row of the report showed "${heading}" in ${CHART_WAIT_LIMIT / 1000} s.`,
+    );
     return;
   }
-  const header = hidden.getRange(HEADER_ROW, CHART_COLUMN, 1, CHART_BLOCK_WIDTH).getValues()[0];
+  const header = hidden.getRange(HEADER_ROW, chart.column, 1, chart.width).getValues()[0];
   const series = header.map((_, offset) => offset).filter((offset) => offset > 0 && cellText(header[offset]) !== "");
-  let chart = null;
+  let built = null;
   if (series.length > 0) {
     const builder = report.newChart().asBarChart();
     for (const offset of [0, ...series]) {
-      builder.addRange(hidden.getRange(HEADER_ROW, CHART_COLUMN + offset, CHART_ROWS + 1, 1));
+      builder.addRange(hidden.getRange(HEADER_ROW, chart.column + offset, chart.rows + 1, 1));
     }
     builder.setNumHeaders(1);
-    builder.setStacked();
-    builder.setColors(series.map(seriesColor));
+    if (chart.stacked) builder.setStacked();
+    builder.setColors(series.map(chart.color));
     builder.setPosition(row, 1, 0, 0);
     builder.setOption("useFirstColumnAsDomain", true);
-    builder.setOption("legend", { position: "top" });
+    builder.setOption("legend", { position: chart.legend });
     builder.setOption("hAxis", { format: "0%" });
-    builder.setOption("annotations.total.enabled", true);
+    for (const [name, value] of Object.entries(chart.options)) builder.setOption(name, value);
     builder.setOption("width", CHART_WIDTH);
     builder.setOption("height", CHART_HEIGHT);
-    chart = builder.build();
+    built = builder.build();
   }
+  const ownBlock = (range) =>
+    range.getSheet().getName() === EXPOSURE_TAB &&
+    range.getColumn() >= chart.column &&
+    range.getColumn() < chart.column + chart.width;
   for (const old of report.getCharts()) {
-    if (old.getRanges().some((range) => range.getSheet().getName() === EXPOSURE_TAB)) report.removeChart(old);
+    if (old.getRanges().some(ownBlock)) report.removeChart(old);
   }
-  if (chart !== null) report.insertChart(chart);
+  if (built !== null) report.insertChart(built);
 }
 
 /**
- * The row of the anchor cell of the tab Concentration.Exposure when column A
- * of the report tab holds the text `heading` in the row above it, as
- * sameHeading compares them, else null.
+ * The row in the anchor cell of the column `anchor` of the tab
+ * Concentration.Exposure when column A of the report tab holds the text
+ * `heading` in the row above it, as sameHeading compares them, else null.
  * The function reads the anchor cell and that cell of the report tab. While
  * the text differs, it waits CHART_WAIT_STEP milliseconds with
  * Utilities.sleep and reads the two cells again, until the total wait
  * reaches CHART_WAIT_LIMIT milliseconds.
  */
-function freshAnchorRow(report, hidden, heading) {
+function freshAnchorRow(report, hidden, anchor, heading) {
   for (let waited = 0; ; waited += CHART_WAIT_STEP) {
-    const row = hidden.getRange(FIRST_DATA_ROW, ANCHOR_COLUMN).getValue();
+    const row = hidden.getRange(FIRST_DATA_ROW, anchor).getValue();
     const fresh =
       Number.isInteger(row) &&
       row > 1 &&
@@ -870,11 +1030,13 @@ function freshAnchorRow(report, hidden, heading) {
  * block, the group block, and the direct weights. A good refresh also writes
  * its start time and its seconds into the run-time block A15:B24, newest
  * first. The grid holds the source column of each position up to
- * MAX_POSITIONS, then the columns of the chart block, then the anchor
- * column. One narrow empty column separates each block from the next. The
- * layout holds the column widths and the formats of the chart block and the
- * label of the anchor cell. writeChartBlock writes the formulas of the block
- * and of the anchor cell.
+ * MAX_POSITIONS, then the columns of the company chart block, the anchor
+ * column of the company chart, the columns of the holdings chart block, and
+ * the anchor column of the holdings chart. One narrow empty column
+ * separates each block from the next. The layout holds the column widths
+ * and the formats of the two chart blocks and the labels of the two anchor
+ * cells. writeChartBlock writes the formulas of the blocks and of the anchor
+ * cells.
  */
 function exposureLayout() {
   const x = exposureColumns();
@@ -885,10 +1047,11 @@ function exposureLayout() {
   const fund = (name) => letter(FUND_COLUMN + FUND_FIELDS.indexOf(name));
   const lastMeasure = FIRST_DATA_ROW + MEASURE_NAMES.length - 1;
   const chartLast = CHART_COLUMN + CHART_BLOCK_WIDTH - 1;
+  const holdingsShare = letter(HOLDINGS_CHART_COLUMN + 1);
   return {
     name: EXPOSURE_TAB,
     rows: TAB_ROWS,
-    columns: ANCHOR_COLUMN,
+    columns: HOLDINGS_ANCHOR_COLUMN,
     hidden: true,
     frozenRows: 4,
     columnWidths: {
@@ -918,6 +1081,11 @@ function exposureLayout() {
       [span(CHART_COLUMN + 1, CHART_BLOCK_WIDTH - 1)]: 90,
       [letter(ANCHOR_COLUMN - 1)]: 24,
       [letter(ANCHOR_COLUMN)]: 110,
+      [letter(HOLDINGS_CHART_COLUMN - 1)]: 24,
+      [letter(HOLDINGS_CHART_COLUMN)]: 220,
+      [span(HOLDINGS_CHART_COLUMN + 1, HOLDINGS_BLOCK_WIDTH - 1)]: 90,
+      [letter(HOLDINGS_ANCHOR_COLUMN - 1)]: 24,
+      [letter(HOLDINGS_ANCHOR_COLUMN)]: 110,
     },
     cells: [
       { range: "A1:A2", values: [["Status"], ["Last run"]] },
@@ -939,6 +1107,7 @@ function exposureLayout() {
       { range: "A26:B26", values: [["equity", "value"]] },
       { range: "A27:A31", values: EQUITY_NAMES.map((name) => [name]) },
       { range: header(ANCHOR_COLUMN, 1), values: [["chartRow"]] },
+      { range: header(HOLDINGS_ANCHOR_COLUMN, 1), values: [["holdingsChartRow"]] },
     ],
     styles: [
       { range: `A4:${x.last}4`, bold: true, background: "#f7f6f1" },
@@ -948,6 +1117,12 @@ function exposureLayout() {
         numberFormat: "0.00%",
       },
       { range: header(ANCHOR_COLUMN, 1), bold: true, background: "#f7f6f1" },
+      { range: header(HOLDINGS_CHART_COLUMN, HOLDINGS_BLOCK_WIDTH), bold: true, background: "#f7f6f1" },
+      {
+        range: `${holdingsShare}${FIRST_DATA_ROW}:${holdingsShare}${HEADER_ROW + HOLDINGS_CHART_ROWS}`,
+        numberFormat: "0.00%",
+      },
+      { range: header(HOLDINGS_ANCHOR_COLUMN, 1), bold: true, background: "#f7f6f1" },
       { range: "A14:B14", bold: true, background: "#f7f6f1" },
       { range: "A26:B26", bold: true, background: "#f7f6f1" },
       { range: "A15:A24", numberFormat: "yyyy-mm-dd hh:mm:ss" },
@@ -997,7 +1172,7 @@ function exposureLayout() {
  *
  * The report spill starts in row REPORT_ROW, and its row count changes with
  * the Holdings tab. So the conditional formats find the titles, the chart
- * header row, the headers, the totals, and the notes of the spill by their
+ * header rows, the headers, the totals, and the notes of the spill by their
  * text. The number formats and the alignment of the columns apply from row
  * REPORT_ROW to the last row.
  */
@@ -1021,7 +1196,7 @@ function reportLayout(inputs = {}) {
     columnWidths: { ...REPORT_WIDTHS, [`G:${last}`]: 96 },
     cells: [
       { range: "A1:B1", values: [["Concentration", DISCLAIMER]] },
-      { range: "B2", values: [["Your securities by company, with a look inside each fund."]] },
+      { range: "B2", values: [["Securities by company, with a look inside each fund."]] },
       {
         range: "D2",
         values: [
@@ -1051,10 +1226,10 @@ function reportLayout(inputs = {}) {
       {
         range: `A${stocks}:B${stocks + 5}`,
         values: [
-          ["Your securities alone", coverageFormula()],
-          ["Securities, share of your portfolio", equityFormula("weight")],
-          ["Top 10 securities, share of your securities", equityFormula("top10Weight")],
-          ["HHI of your securities, 0 to 10,000", equityFormula("hhi")],
+          ["Securities alone", coverageFormula()],
+          ["Securities, share of the portfolio", equityFormula("weight")],
+          ["Top 10 securities, share of the securities", equityFormula("top10Weight")],
+          ["HHI of the securities, 0 to 10,000", equityFormula("hhi")],
           ["Effective number of securities", equityFormula("effectiveCount")],
           [noStockFormula(), ""],
         ],
@@ -1147,7 +1322,7 @@ function reportLayout(inputs = {}) {
       },
       {
         range: spill,
-        formula: `=OR($A${first}="${HOLDINGS_TITLE}",$A${first}=${chartHeading(`$B$${THRESHOLD_ROW}`)},$B${first}="Fund overlap",$B${first}="${UNSEEN_TITLE}",$B${first}="${OTHER_TITLE}")`,
+        formula: `=OR($A${first}="${HOLDINGS_TITLE}",$A${first}="${HOLDINGS_HEADING}",$A${first}=${chartHeading(`$B$${THRESHOLD_ROW}`)},$B${first}="Fund overlap",$B${first}="${UNSEEN_TITLE}",$B${first}="${OTHER_TITLE}")`,
         bold: true,
       },
       {
@@ -1234,7 +1409,7 @@ function labelIndex(rows, label) {
  * Concentration, because a spreadsheet must keep one visible tab through
  * each step. It changes no other tab.
  *
- * The last step writes the chart block and the anchor cell of
+ * The last step writes the chart blocks and the anchor cells of
  * Concentration.Exposure, each time the function replaced a tab. Their
  * formulas read Concentration. A formula that reads a tab which the same
  * run deletes and creates again stays stale, so the function writes them
@@ -1255,21 +1430,31 @@ function ensureTabs(book) {
 }
 
 /**
- * Write the formulas of the chart block and of the anchor cell into the tab
- * Concentration.Exposure. The first call writes the block: the header row
- * HEADER_ROW and the CHART_ROWS data rows under it, from the column
- * CHART_COLUMN. The second call writes the anchor cell, in the row
- * FIRST_DATA_ROW of the column ANCHOR_COLUMN. The formulas come from
- * chartFormulas and anchorFormula and read the report tab, so ensureTabs
+ * Write the formulas of the two chart blocks and of the two anchor cells
+ * into the tab Concentration.Exposure, with four calls. The first call
+ * writes the company chart block: the header row HEADER_ROW and the
+ * CHART_ROWS data rows under it, from the column CHART_COLUMN. The second
+ * call writes the anchor cell of the company chart, in the row
+ * FIRST_DATA_ROW of the column ANCHOR_COLUMN. The third call writes the
+ * holdings chart block: the header row and the HOLDINGS_CHART_ROWS data rows
+ * under it, from the column HOLDINGS_CHART_COLUMN. The fourth call writes
+ * the holdings anchor cell, in the row FIRST_DATA_ROW of the column
+ * HOLDINGS_ANCHOR_COLUMN. The formulas read the report tab, so ensureTabs
  * calls this function after the report tab exists. The layout of the hidden
- * tab holds the column widths, the formats, and the label of the anchor
- * cell.
+ * tab holds the column widths, the formats, and the labels of the anchor
+ * cells.
  */
 function writeChartBlock(hidden) {
   const chart = chartFormulas();
   const rows = [chart.header, ...Array.from({ length: CHART_ROWS }, () => chart.row)];
   hidden.getRange(HEADER_ROW, CHART_COLUMN, CHART_ROWS + 1, CHART_BLOCK_WIDTH).setValues(rows);
   hidden.getRange(FIRST_DATA_ROW, ANCHOR_COLUMN).setValues([[anchorFormula()]]);
+  const holdings = holdingsChartFormulas();
+  const holdingRows = [holdings.header, ...Array.from({ length: HOLDINGS_CHART_ROWS }, () => holdings.row)];
+  hidden
+    .getRange(HEADER_ROW, HOLDINGS_CHART_COLUMN, HOLDINGS_CHART_ROWS + 1, HOLDINGS_BLOCK_WIDTH)
+    .setValues(holdingRows);
+  hidden.getRange(FIRST_DATA_ROW, HOLDINGS_ANCHOR_COLUMN).setValues([[holdingsAnchorFormula()]]);
 }
 
 /**

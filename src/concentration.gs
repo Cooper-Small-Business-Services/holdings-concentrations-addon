@@ -9,10 +9,10 @@
  * another layout version. It reads no other tab, and it writes no other tab.
  * The menu item Refresh of the add-on menu is the one way to run the
  * report. The add-on menu is under Extensions, with the name of the add-on.
- * Each good refresh also draws the bar chart of the report tab again and
- * records its time in the hidden tab. The simple trigger onEdit draws the
- * bar chart again after an edit of the threshold cell. It sends no request
- * and writes no cell.
+ * Each good refresh also draws the two bar charts of the report tab again,
+ * the company chart and the holdings chart, and records its time in the
+ * hidden tab. The simple trigger onEdit draws the company chart again after
+ * an edit of the threshold cell. It sends no request and writes no cell.
  *
  * The user properties of each person hold the API key of that person. The
  * menu item Set API key writes it. The script does not use the script
@@ -295,8 +295,8 @@ const DIRECT_COLUMN = PART_COLUMN + 1;
 const SOURCE_COLUMN = DIRECT_COLUMN + 1;
 
 /**
- * The first column of the chart block, IT. One empty column separates it
- * from the column of position MAX_POSITIONS. The block holds a header in
+ * The first column of the company chart block, IT. One empty column separates
+ * it from the column of position MAX_POSITIONS. The block holds a header in
  * row HEADER_ROW and CHART_ROWS data rows. Its columns are the company name,
  * Direct, CHART_FUNDS fund columns, and Other funds. ensureTabs writes the
  * block after both tabs exist. The write of the answer writes no cell of the
@@ -305,7 +305,7 @@ const SOURCE_COLUMN = DIRECT_COLUMN + 1;
 const CHART_COLUMN = SOURCE_COLUMN + MAX_POSITIONS + 1;
 
 /**
- * The count of companies that the bar chart can show, the count of funds
+ * The count of companies that the company chart can show, the count of funds
  * that get a series of their own, and the count of columns of the chart
  * block.
  */
@@ -314,12 +314,40 @@ const CHART_FUNDS = 5;
 const CHART_BLOCK_WIDTH = CHART_FUNDS + 3;
 
 /**
- * The column of the anchor cell, JC. One empty column separates it from the
- * chart block. Row HEADER_ROW holds its label, and row FIRST_DATA_ROW holds
- * the anchor cell: the row of the report tab where the bar chart starts.
- * ensureTabs writes the anchor cell after both tabs exist.
+ * The column of the anchor cell of the company chart, JC. One empty column
+ * separates it from the company chart block. Row HEADER_ROW holds its label,
+ * and row FIRST_DATA_ROW holds the anchor cell: the row of the report tab
+ * where the company chart starts. ensureTabs writes the anchor cell after
+ * both tabs exist.
  */
 const ANCHOR_COLUMN = CHART_COLUMN + CHART_BLOCK_WIDTH + 1;
+
+/**
+ * The first column of the holdings chart block, JE. One empty column
+ * separates it from the anchor cell. The block holds a header in row
+ * HEADER_ROW and HOLDINGS_CHART_ROWS data rows. Its columns are the label of
+ * each holding group and the share of the portfolio of the group. ensureTabs
+ * writes the block after both tabs exist. The write of the answer writes no
+ * cell of the block.
+ */
+const HOLDINGS_CHART_COLUMN = ANCHOR_COLUMN + 2;
+
+/**
+ * The count of holding groups that the holdings chart can show, and the
+ * count of columns of the holdings chart block. A refresh sends one position
+ * for each holding group, and MAX_POSITIONS positions at most.
+ */
+const HOLDINGS_CHART_ROWS = MAX_POSITIONS;
+const HOLDINGS_BLOCK_WIDTH = 2;
+
+/**
+ * The column of the holdings anchor cell, JH. One empty column separates it
+ * from the holdings chart block. Row HEADER_ROW holds its label, and row
+ * FIRST_DATA_ROW holds the anchor cell: the row of the report tab where the
+ * holdings chart starts. ensureTabs writes the anchor cell after both tabs
+ * exist.
+ */
+const HOLDINGS_ANCHOR_COLUMN = HOLDINGS_CHART_COLUMN + HOLDINGS_BLOCK_WIDTH + 1;
 
 /**
  * The row of the header of the run-time block, A14:B14. The block holds one
@@ -365,9 +393,9 @@ function onInstall() {
 }
 
 /**
- * Draw the bar chart of the report tab again after an edit of the threshold
- * cell. The spreadsheet runs this simple trigger after each edit by a
- * person, in AuthMode.LIMITED, which gives it the spreadsheet and no
+ * Draw the company chart of the report tab again after an edit of the
+ * threshold cell. The spreadsheet runs this simple trigger after each edit by
+ * a person, in AuthMode.LIMITED, which gives it the spreadsheet and no
  * network. It sends no request and writes no cell.
  *
  * The function returns at once, with no log line, when no event object
@@ -464,13 +492,14 @@ function refreshConcentration() {
  * layout.gs. A fault writes the status cell B1 and the time cell B2 alone, so
  * the last good answer stays in the other cells.
  *
- * A good refresh draws the bar chart of the report tab again after the
- * status, with drawChart and the threshold of readInputs. A fault draws no
- * chart, so the chart of the last good refresh stays.
+ * A good refresh draws the two bar charts of the report tab again after the
+ * status: the company chart with drawChart and the threshold of readInputs,
+ * then the holdings chart with drawHoldingsChart. A fault draws no chart, so
+ * the charts of the last good refresh stay.
  *
  * A good refresh records its time in the run-time block. The time starts at
  * the start of this function. It ends after the write of the answer, the
- * status, and the chart. SpreadsheetApp.flush applies the pending writes
+ * status, and the charts. SpreadsheetApp.flush applies the pending writes
  * before the end, so the time includes them. A fault records no time.
  */
 function runRefresh() {
@@ -532,6 +561,7 @@ function runRefresh() {
   writeAnswer(out, ids, answer, mixRows(positions, mixes));
   writeStatus(out, "OK");
   drawChart(book, readInputs(book.getSheetByName(REPORT_TAB)).threshold);
+  drawHoldingsChart(book);
   SpreadsheetApp.flush();
   recordRun(out, started, (Date.now() - started.getTime()) / 1000);
 }
@@ -1129,7 +1159,7 @@ function fitGrid(sheet, rows, columns) {
  * column before the lines block, and the rows after lineLast from the lines
  * block to lastColumn. Each area ends at the last row that holds a value.
  * Each area ends at the last column that holds a value, and at the column
- * of position MAX_POSITIONS at most, so the chart block and the anchor cell
+ * of position MAX_POSITIONS at most, so the chart blocks and the anchor cells
  * keep their formulas. Column A and the cells that the new answer writes
  * keep their values.
  */

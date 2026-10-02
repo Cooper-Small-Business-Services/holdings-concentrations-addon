@@ -1,6 +1,6 @@
 {
   "tab": "Concentration.Exposure",
-  "note": "The answer of the concentration route and the values that the script computes from it. B3 holds the layout version. The script writes B1, B2, B5:B13, B27:B31, D5:N, P5:S, and the mix block U5:Z. It writes the unseen block AB5:AC, one row for each position with the weight of the lines of the class unknown that came through it. It writes the stock fund block AE5:AE, the own block AG5:AK of the rows that the report shows on a row of their own, and the group block AM5:AP of the other rows of the other part, one row for each class. It writes the rows of the lines from AR5, the direct weight of each row in column AZ, and one source column for each position from column BA, with the position id in row 4. A line gives one row for its stock part, one row for its other part, or both, and column AY names the part. The mix block holds one row for each fund of each mix that the request sent. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. The chart block IT4:JA104 holds the source of the bar chart of the report tab. Each of its cells is a formula that reads the company table of the report spill. Row 4 holds the series names, and a header that shows an empty string marks a column with no series. The eachRow entry holds the one row of formulas that each of the 100 data rows holds. The anchor cell JC5 holds the row of the report tab where the chart starts: it finds the chart header row of the report spill and adds 1. ensureTabs writes the chart block and the anchor cell after both tabs exist, so their formulas read the report tab that the same run creates. The write of the answer writes no cell of the block and not the anchor cell. This file holds the state of the tab after ensureTabs: the layout version, the labels, the chart block, the anchor cell, and the format. The tab holds no dollar value.",
+  "note": "The answer of the concentration route and the values that the script computes from it. B3 holds the layout version. The script writes B1, B2, B5:B13, B27:B31, D5:N, P5:S, and the mix block U5:Z. It writes the unseen block AB5:AC, one row for each position with the weight of the lines of the class unknown that came through it. It writes the stock fund block AE5:AE, the own block AG5:AK of the rows that the report shows on a row of their own, and the group block AM5:AP of the other rows of the other part, one row for each class. It writes the rows of the lines from AR5, the direct weight of each row in column AZ, and one source column for each position from column BA, with the position id in row 4. A line gives one row for its stock part, one row for its other part, or both, and column AY names the part. The mix block holds one row for each fund of each mix that the request sent. A good refresh also writes its start time and its seconds into A15:B24, newest first, 10 rows at most. The company chart block IT4:JA104 holds the source of the company chart of the report tab. Each of its cells is a formula that reads the company table of the report spill. Row 4 holds the series names, and a header that shows an empty string marks a column with no series. The eachRow entry holds the one row of formulas that each of the 100 data rows holds. The anchor cell JC5 holds the row of the report tab where the company chart starts: it finds the header row of the company chart in the report spill and adds 1. The holdings chart block JE4:JF204 holds the source of the holdings chart. Each of its cells is a formula that reads the section Holdings of the report spill: the label of each holding group and its share of the portfolio, in the order of the table. The header of the share column shows an empty string when the table holds no group. The eachRow entry holds the one row of formulas that each of the 200 data rows holds. The anchor cell JH5 holds the row of the report tab where the holdings chart starts: it finds the header row of the holdings chart in the report spill and adds 1. ensureTabs writes the chart blocks and the anchor cells after both tabs exist, so their formulas read the report tab that the same run creates. The write of the answer writes no cell of the blocks and not the anchor cells. This file holds the state of the tab after ensureTabs: the layout version, the labels, the chart blocks, the anchor cells, and the format. The tab holds no dollar value.",
   "cells": [
     {
       "range": "A1:A2",
@@ -8,7 +8,7 @@
     },
     {
       "range": "A3:B3",
-      "values": [["layoutVersion", 8]]
+      "values": [["layoutVersion", 10]]
     },
     {
       "range": "A4:A13",
@@ -126,11 +126,35 @@
           "=IFERROR(XMATCH(\"Companies at or over \"&TEXT('Concentration'!$B$23,\"0.00%\")&\" of the portfolio, by source\",'Concentration'!$A:$A)+1,\"\")"
         ]
       ]
+    },
+    {
+      "range": "JE4:JF4",
+      "values": [
+        [
+          "=\"Holding\"",
+          "=IFERROR(LET(sa,'Concentration'!$A$26:$A,\nh,XMATCH(1,ARRAYFORMULA((sa=\"Holding\")*('Concentration'!$B$26:$B=\"Ticker\"))),\nw,CHOOSEROWS('Concentration'!$C$26:$C,SEQUENCE(MIN(200,ROWS(sa)-h),1,h+1)),\nm,IFNA(XMATCH(0,ARRAYFORMULA(ISNUMBER(w)*1)),ROWS(w)+1)-1,\nIF(m=0,\"\",IF(COUNT(CHOOSEROWS('Concentration'!$E$26:$E,SEQUENCE(m,1,h+1)))=0,\"\",\"% of portfolio\"))),\"\")"
+        ]
+      ]
+    },
+    {
+      "range": "JE5:JF204",
+      "eachRow": [
+        "=IFERROR(LET(r,ROW()-4,sa,'Concentration'!$A$26:$A,\nh,XMATCH(1,ARRAYFORMULA((sa=\"Holding\")*('Concentration'!$B$26:$B=\"Ticker\"))),\nw,CHOOSEROWS('Concentration'!$C$26:$C,SEQUENCE(MIN(200,ROWS(sa)-h),1,h+1)),\nm,IFNA(XMATCH(0,ARRAYFORMULA(ISNUMBER(w)*1)),ROWS(w)+1)-1,\nIF(r>m,\"\",IF(INDEX('Concentration'!$B$26:$B,h+r)<>\"\",INDEX('Concentration'!$B$26:$B,h+r),LEFT(INDEX(sa,h+r),24)))),\"\")",
+        "=IFERROR(LET(r,ROW()-4,sa,'Concentration'!$A$26:$A,\nh,XMATCH(1,ARRAYFORMULA((sa=\"Holding\")*('Concentration'!$B$26:$B=\"Ticker\"))),\nw,CHOOSEROWS('Concentration'!$C$26:$C,SEQUENCE(MIN(200,ROWS(sa)-h),1,h+1)),\nm,IFNA(XMATCH(0,ARRAYFORMULA(ISNUMBER(w)*1)),ROWS(w)+1)-1,\nIF(r>m,\"\",INDEX('Concentration'!$E$26:$E,h+r))),\"\")"
+      ]
+    },
+    {
+      "range": "JH4",
+      "values": [["holdingsChartRow"]]
+    },
+    {
+      "range": "JH5",
+      "values": [["=IFERROR(XMATCH(\"Holdings by share of the portfolio\",'Concentration'!$A:$A)+1,\"\")"]]
     }
   ],
   "format": {
     "hidden": true,
-    "columns": 263,
+    "columns": 268,
     "frozenRows": 4,
     "columnWidths": {
       "A": 170,
@@ -158,7 +182,12 @@
       "IT": 220,
       "IU:JA": 90,
       "JB": 24,
-      "JC": 110
+      "JC": 110,
+      "JD": 24,
+      "JE": 220,
+      "JF": 90,
+      "JG": 24,
+      "JH": 110
     },
     "cells": [
       {
@@ -177,6 +206,20 @@
       },
       {
         "range": "JC4",
+        "bold": true,
+        "background": "#f7f6f1"
+      },
+      {
+        "range": "JE4:JF4",
+        "bold": true,
+        "background": "#f7f6f1"
+      },
+      {
+        "range": "JF5:JF204",
+        "numberFormat": "0.00%"
+      },
+      {
+        "range": "JH4",
         "bold": true,
         "background": "#f7f6f1"
       },
