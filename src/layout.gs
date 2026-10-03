@@ -43,10 +43,10 @@ const REPORT_TAB = "Concentration";
 
 /**
  * The version of the layout of the two tabs. Add 1 when a change moves a cell
- * that a formula or the script reads. The next refresh then replaces the two
- * tabs of each spreadsheet.
+ * that a formula or the script reads, or changes the format of a cell. The
+ * next refresh then replaces the two tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 14;
+const LAYOUT_VERSION = 15;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -1321,7 +1321,7 @@ function reportLayout(inputs = {}) {
       { range: "D2", color: "#6b6962", italic: true },
       { range: `A${status}:A${comp + 3}`, color: "#57554f" },
       { range: `B${status + 2}`, numberFormat: "yyyy-mm-dd hh:mm" },
-      { range: `B${TOTAL_ROW}`, numberFormat: "$#,##0", bold: true },
+      { range: `B${TOTAL_ROW}`, numberFormat: "$#,##0.00", bold: true },
       { range: `B${status + 4}:B${status + 5}`, numberFormat: "0.00%" },
       { range: `B${status + 6}:B${status + 7}`, numberFormat: '0.0" s"' },
       { range: `B${status}:B${status + 7}`, align: "right" },
