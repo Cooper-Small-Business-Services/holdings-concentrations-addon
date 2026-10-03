@@ -3518,6 +3518,11 @@ function main() {
     report.cell(SPILL_CELL).includes('rest,HSTACK(SUM(sel)+1,"Securities under "'),
     "the row of the securities under the threshold holds the next rank, the count of the company rows plus 1",
   );
+  const reportStyles = new Map(JSON.parse(created[REPORT_TAB]).styles);
+  check(
+    reportStyles.get(cellKey(vm.runInContext("TOTAL_ROW", context), 2))?.numberFormat === "$#,##0.00",
+    "the total value cell shows the cents, so it matches the sum of the Value column",
+  );
   const reportRules = JSON.parse(created[REPORT_TAB]).rules;
   const restRules = reportRules.filter((rule) => rule.formula === '=LEFT($B26,17)="Securities under "');
   check(

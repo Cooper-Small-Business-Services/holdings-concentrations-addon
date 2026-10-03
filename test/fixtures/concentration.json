@@ -165,7 +165,7 @@
       },
       {
         "range": "B6",
-        "numberFormat": "$#,##0",
+        "numberFormat": "$#,##0.00",
         "bold": true
       },
       {
