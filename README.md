@@ -31,7 +31,7 @@ Lost your key? Sign up again with the same email address.
 ## Describe a fund
 
 Some funds, such as the trust funds of many 401(k) plans, publish no holdings that the add-on can read. The report lists
-them under **Funds not looked through**. To add the fund mix of such a holding, choose **Extensions > Holdings
+them under **Holdings not looked through**. To add the fund mix of such a holding, choose **Extensions > Holdings
 Concentration for Tiller > Describe a fund**. Pick the holding, and type the ticker and the percent of each fund from
 its fact sheet. Then choose **Refresh**.
 
