@@ -46,7 +46,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads, or changes the format of a cell. The
  * next refresh then replaces the two tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 18;
+const LAYOUT_VERSION = 19;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -105,16 +105,21 @@ const THRESHOLD_ROW = 2;
 const OVERLAP_ROW = 3;
 
 /**
- * The count of frozen rows of the report tab: the title row and the two
- * rows of the cells that the person types in.
+ * The row of the subtitle in column B and of the note on the held fund
+ * reports in column D. The row is the row under the overlap minimum cell,
+ * and it is the last frozen row of the report tab.
  */
-const REPORT_FROZEN_ROWS = OVERLAP_ROW;
+const SUBTITLE_ROW = OVERLAP_ROW + 1;
 
 /**
- * The row of the subtitle in column B and of the note on the held fund
- * reports in column D. The row is the first row under the frozen rows.
+ * The count of frozen rows of the report tab: the title row, the two rows
+ * of the cells that the person types in, and the subtitle row. After an
+ * edit of the overlap minimum cell, Enter moves the selection to the row
+ * under it. That row is frozen, so the view stays where it is. When the
+ * row under the overlap minimum cell is not frozen, Sheets scrolls to the
+ * top of the tab to show the selection.
  */
-const SUBTITLE_ROW = REPORT_FROZEN_ROWS + 1;
+const REPORT_FROZEN_ROWS = SUBTITLE_ROW;
 
 /**
  * The row of the status cell and the row of the total value cell of the
@@ -1308,11 +1313,11 @@ function exposureLayout() {
  * threshold cell and of the overlap minimum cell, by the names of INPUTS. An
  * absent name gets the value of INPUTS. A person can change both cells.
  *
- * The frozen rows hold the title in A1, the disclaimer in B1, and the rows
+ * The frozen rows hold the title in A1, the disclaimer in B1, the rows
  * THRESHOLD_ROW and OVERLAP_ROW of the two cells, each with its label in
- * column A and its help text in column C. Row SUBTITLE_ROW, under the frozen
- * rows, holds the subtitle in column B and the note on the held fund reports
- * in column D. B6, under the status cell, counts the holdings that are funds
+ * column A and its help text in column C, and row SUBTITLE_ROW. Row
+ * SUBTITLE_ROW, the last frozen row, holds the subtitle in column B and the
+ * note on the held fund reports in column D. B6, under the status cell, counts the holdings that are funds
  * not looked through. B11 and B12 show the seconds of the last good refresh
  * and the average of the recorded refreshes. The header of the security
  * measures carries the coverage label.
