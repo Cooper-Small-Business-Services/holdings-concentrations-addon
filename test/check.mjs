@@ -375,8 +375,8 @@ const EQUITY_ROW = EQUITY_HEADER + 1;
  * and the two cells of the Concentration tab that a person types in.
  */
 const VERSION_CELL = "B3";
-const THRESHOLD_CELL = "B23";
-const MINIMUM_CELL = "B24";
+const THRESHOLD_CELL = "B2";
+const MINIMUM_CELL = "B3";
 
 /**
  * The cells of the Concentration tab: the disclaimer, the subtitle, the total
@@ -384,12 +384,12 @@ const MINIMUM_CELL = "B24";
  * spill.
  */
 const DISCLAIMER_CELL = "B1";
-const SUBTITLE_CELL = "B2";
-const TOTAL_CELL = "B6";
-const NOTE_CELL = "B4";
-const COVERAGE_CELL = "B12";
-const SPILL_CELL = "A26";
-const REPORT_ROW = 26;
+const SUBTITLE_CELL = "B4";
+const TOTAL_CELL = "B8";
+const NOTE_CELL = "B6";
+const COVERAGE_CELL = "B14";
+const SPILL_CELL = "A28";
+const REPORT_ROW = 28;
 
 /**
  * The texts of the report that a person reads about the funds not looked
@@ -1898,7 +1898,7 @@ function yoursRows() {
 
 /**
  * The row of the report tab under the header row of the holdings chart in
- * the report spill. The spill holds these rows from row 26: the title
+ * the report spill. The spill holds these rows from row 28: the title
  * Holdings, the header of the section, the rows of yoursRows, a blank row,
  * and the header row of the holdings chart.
  */
@@ -3521,6 +3521,42 @@ function main() {
   );
   check(report.cell(THRESHOLD_CELL) === 0.01, `the threshold cell ${THRESHOLD_CELL} holds its default 0.01`);
   check(report.cell(MINIMUM_CELL) === 0.1, `the overlap minimum cell ${MINIMUM_CELL} holds its default 0.1`);
+  const createdReport = JSON.parse(created[REPORT_TAB]);
+  check(
+    createdReport.frozenRows === 3 &&
+      report.cell("A2") === "Threshold" &&
+      report.cell("A3") === "Overlap minimum" &&
+      THRESHOLD_CELL === "B2" &&
+      MINIMUM_CELL === "B3",
+    "the three frozen rows hold the title row and the two cells that a person types in, with the labels in column A",
+  );
+  check(
+    report.cell("C2") ===
+      "Enter a percentage. Each company whose securities are greater than or equal to the value are included in the company rankings." &&
+      report.cell("C3") ===
+        "Enter a percentage. The fund overlap list under the company table shows each pair of funds at or above it.",
+    "C2 and C3 hold the help texts of the two cells",
+  );
+  const validationText = new Map(createdReport.validation.map(([key, rule]) => [key, rule.helpText]));
+  check(
+    validationText.get(cellKey(2, 2)) === "Enter a percentage from 0% to 100%, such as 1%." &&
+      validationText.get(cellKey(3, 2)) === "Enter a percentage from 0% to 100%, such as 10%.",
+    "the data validation messages of B2 and B3 start with Enter a percentage",
+  );
+  const shownTexts = [
+    ...createdReport.grid.flat().filter((value) => typeof value === "string" && !value.startsWith("=")),
+    ...[...report.cell(SPILL_CELL).matchAll(/\{("[^"]*"(?:,"[^"]*")*)\}/g)].flatMap((m) => m[1].split(",")),
+    ...[...report.cell(SPILL_CELL).matchAll(/\n "([^"]*)",/g)].map((m) => m[1]),
+  ];
+  check(
+    shownTexts.length > 0 && shownTexts.every((text) => !/weight/i.test(text)),
+    `no label of the report tab says weight (${shownTexts.filter((text) => /weight/i.test(text)).join("; ")})`,
+  );
+  check(
+    report.cell(SPILL_CELL).includes('"Fund 1 % of portfolio","Fund 2 % of portfolio"') &&
+      report.cell("G5") === "% of portfolio",
+    "the fund overlap table and the fund table say % of portfolio",
+  );
   check(
     report.cell(SPILL_CELL).startsWith("=LET(") && report.cell(SPILL_CELL).includes("\n"),
     `${SPILL_CELL} holds the report formula`,
@@ -3585,12 +3621,12 @@ function main() {
     `${NOTE_CELL} and ${SPILL_CELL} hold no MMULT, no BYROW, and no num, isf, or fid`,
   );
   for (const text of [
-    "thr,$B$23,",
+    "thr,$B$2,",
     'sel,ARRAYFORMULA((LP="stock")*ISNUMBER(LX)*(LX>=thr)*(LK<>"other:lines")),',
     'rsel,ARRAYFORMULA((LP="stock")*ISNUMBER(LX)*((LX<thr)+(LK="other:lines")>0)),',
     'rc,COUNTIFS(LP,"stock",LX,"<"&thr,LX,"<>0",LK,"<>other:lines"),',
     "rf,MAP(f,LAMBDA(x,IFERROR(SUM(FILTER(INDEX(LS,0,XMATCH(x,LH)),rsel)),0))),",
-    "psel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$24)),",
+    "psel,ARRAYFORMULA(ISNUMBER(po)*(po>=$B$3)),",
     "IF(ABS(gw*tot)>=100,1,0)",
   ]) {
     check(
@@ -3664,7 +3700,7 @@ function main() {
   check(
     exposureState.grid[3][ANCHOR_AT - 1] === "chartRow" &&
       exposureState.grid[4][ANCHOR_AT - 1] ===
-        `=IFERROR(XMATCH(${heading("'Concentration'!$B$23")},'Concentration'!$A:$A)+1,"")`,
+        `=IFERROR(XMATCH(${heading("'Concentration'!$B$2")},'Concentration'!$A:$A)+1,"")`,
     "the anchor cell JC5 finds the text of the chart header row in column A of the report tab, with the threshold " +
       "cell, and adds 1",
   );
@@ -3676,7 +3712,7 @@ function main() {
   check(
     chartHeader[0] === '="Company"' &&
       chartHeader[1].includes(
-        `IF(m=0,"",IF(SUM(CHOOSEROWS('Concentration'!$G$26:$G,SEQUENCE(m,1,h+1)))=0,"","Direct"))`,
+        `IF(m=0,"",IF(SUM(CHOOSEROWS('Concentration'!$G$28:$G,SEQUENCE(m,1,h+1)))=0,"","Direct"))`,
       ) &&
       chartHeader.at(-1).includes(`IF(m=0,"",LET(g,`) &&
       chartHeader.at(-1).includes(`IF(nz<=${CHART_FUNDS},"","Other funds")`),
@@ -3686,7 +3722,7 @@ function main() {
   check(
     [1, 2, 3, 4, 5].every(
       (k) =>
-        chartHeader[1 + k].includes(`LEFT(INDEX('Concentration'!$H$26:$Z,h,INDEX(o,${k})),24)`) &&
+        chartHeader[1 + k].includes(`LEFT(INDEX('Concentration'!$H$28:$Z,h,INDEX(o,${k})),24)`) &&
         chartRow[1 + k].includes(`INDEX(g,r,INDEX(o,${k}))`),
     ),
     "fund column k shows the fund at place k of the order o, and its header is the id of the fund, cut to 24 characters",
@@ -3704,13 +3740,13 @@ function main() {
     .flatMap((formula) => [...formula.matchAll(/'([^']+)'!\$?([A-Z]+)\$?(\d+)/g)]);
   check(
     blockReferences.length > 0 &&
-      blockReferences.every((m) => m[1] === REPORT_TAB && m[3] === "26" && ["A", "B", "G", "H"].includes(m[2])),
+      blockReferences.every((m) => m[1] === REPORT_TAB && m[3] === "28" && ["A", "B", "G", "H"].includes(m[2])),
     "each formula of the chart block reads the company table of the report spill alone: the columns A, B, G, and " +
-      "H:Z from row 26, and no value that the script computes",
+      "H:Z from row 28, and no value that the script computes",
   );
   const blockRanges = new Set(blockReferences.map((m) => `${m[2]}${m[3]}`));
   check(
-    JSON.stringify([...blockRanges].sort()) === JSON.stringify(["A26", "B26", "G26", "H26"]),
+    JSON.stringify([...blockRanges].sort()) === JSON.stringify(["A28", "B28", "G28", "H28"]),
     `the chart block reads the rank, the company, the direct, and the fund columns of the spill (${[...blockRanges].join(", ")})`,
   );
   const exposureReads = formulas
@@ -3736,8 +3772,8 @@ function main() {
     cellKey(compositionRow + 1, 2),
     cellKey(compositionRow + 2, 2),
     cellKey(compositionRow + 3, 2),
-    cellKey(26, 4),
-    cellKey(27, 4),
+    cellKey(REPORT_ROW, 4),
+    cellKey(REPORT_ROW + 1, 4),
   ];
   check(
     currencyCells.every((key) => reportStyles.get(key)?.numberFormat === "$#,##0.00"),
@@ -3748,7 +3784,7 @@ function main() {
     "no cell of the report has a whole-dollar format",
   );
   const reportRules = JSON.parse(created[REPORT_TAB]).rules;
-  const restRules = reportRules.filter((rule) => rule.formula === '=LEFT($B26,17)="Securities under "');
+  const restRules = reportRules.filter((rule) => rule.formula === '=LEFT($B28,17)="Securities under "');
   check(
     restRules.length === 1 &&
       restRules[0].background === undefined &&
@@ -3760,14 +3796,14 @@ function main() {
     reportRules.some(
       (rule) =>
         rule.bold === true &&
-        rule.formula === '=AND(ISNUMBER($A26),LEFT($B26,17)<>"Securities under ",N($G26)>0,SUM($H26:$Z26)>0)',
+        rule.formula === '=AND(ISNUMBER($A28),LEFT($B28,17)<>"Securities under ",N($G28)>0,SUM($H28:$Z28)>0)',
     ),
     "the bold rule of column B holds no row of the securities under the threshold",
   );
   check(
     [...chartHeader.slice(1), ...chartRow].every((formula) =>
       formula.includes(
-        "wb,CHOOSEROWS('Concentration'!$B$26:$B,SEQUENCE(ROWS(w),1,h+1)),\n" +
+        "wb,CHOOSEROWS('Concentration'!$B$28:$B,SEQUENCE(ROWS(w),1,h+1)),\n" +
           'm,SUMPRODUCT((w=SEQUENCE(ROWS(w)))*(LEFT(wb,17)<>"Securities under ")*1),',
       ),
     ),
@@ -3816,9 +3852,9 @@ function main() {
       .every((formula) =>
         formula === '="Holding"'
           ? true
-          : formula.includes(`h,XMATCH(1,ARRAYFORMULA((sa="Holding")*('Concentration'!$B$26:$B="Ticker")))`) &&
+          : formula.includes(`h,XMATCH(1,ARRAYFORMULA((sa="Holding")*('Concentration'!$B$28:$B="Ticker")))`) &&
             formula.includes(
-              `w,CHOOSEROWS('Concentration'!$C$26:$C,SEQUENCE(MIN(${HOLDINGS_CHART_ROWS},ROWS(sa)-h),1,h+1))`,
+              `w,CHOOSEROWS('Concentration'!$C$28:$C,SEQUENCE(MIN(${HOLDINGS_CHART_ROWS},ROWS(sa)-h),1,h+1))`,
             ) &&
             formula.includes("m,IFNA(XMATCH(0,ARRAYFORMULA(ISNUMBER(w)*1)),ROWS(w)+1)-1,"),
       ),
@@ -3829,14 +3865,14 @@ function main() {
   check(
     holdingsHeader[0] === '="Holding"' &&
       holdingsHeader[1].includes(
-        `IF(m=0,"",IF(COUNT(CHOOSEROWS('Concentration'!$E$26:$E,SEQUENCE(m,1,h+1)))=0,"","% of portfolio"))`,
+        `IF(m=0,"",IF(COUNT(CHOOSEROWS('Concentration'!$E$28:$E,SEQUENCE(m,1,h+1)))=0,"","% of portfolio"))`,
       ),
     "the header row names the label column; the share header is empty when the table holds no group or no share",
   );
   check(
     holdingsRow[0].includes(
-      `IF(r>m,"",IF(INDEX('Concentration'!$B$26:$B,h+r)<>"",INDEX('Concentration'!$B$26:$B,h+r),LEFT(INDEX(sa,h+r),24)))`,
-    ) && holdingsRow[1].includes(`IF(r>m,"",INDEX('Concentration'!$E$26:$E,h+r))`),
+      `IF(r>m,"",IF(INDEX('Concentration'!$B$28:$B,h+r)<>"",INDEX('Concentration'!$B$28:$B,h+r),LEFT(INDEX(sa,h+r),24)))`,
+    ) && holdingsRow[1].includes(`IF(r>m,"",INDEX('Concentration'!$E$28:$E,h+r))`),
     "the label is the Ticker of the group, or the Holding cut to 24 characters, and the share is its % of portfolio",
   );
   /**
@@ -3868,10 +3904,10 @@ function main() {
     .flatMap((formula) => [...formula.matchAll(/'([^']+)'!\$?([A-Z]+)\$?(\d+)/g)]);
   check(
     holdingsReferences.length > 0 &&
-      holdingsReferences.every((m) => m[1] === REPORT_TAB && m[3] === "26") &&
+      holdingsReferences.every((m) => m[1] === REPORT_TAB && m[3] === "28") &&
       JSON.stringify([...new Set(holdingsReferences.map((m) => m[2]))].sort()) === JSON.stringify(["A", "B", "C", "E"]),
     "each formula of the holdings chart block reads the Holding, Ticker, Accounts, and % of portfolio columns of " +
-      "the report spill from row 26 alone, and no value that the script computes",
+      "the report spill from row 28 alone, and no value that the script computes",
   );
 
   const reportFormulas = formulas.filter((f) => f.at.startsWith(`${REPORT_TAB} `));
@@ -4329,14 +4365,14 @@ function main() {
   );
   const skipFrom = state.logged.length;
   for (const [name, event] of [
-    ["an edit of the overlap minimum B24", edit(report, MINIMUM_CELL, "20%")],
-    ["an edit of C23 in the threshold row", edit(report, "C23", "5%")],
-    ["an edit of the label A23", edit(report, "A23", "5%")],
+    ["an edit of the overlap minimum B3", edit(report, MINIMUM_CELL, "20%")],
+    ["an edit of C2 in the threshold row", edit(report, "C2", "5%")],
+    ["an edit of the label A2", edit(report, "A2", "5%")],
     ["an edit of B22 in column B", edit(report, "B22", "5%")],
-    ["a paste into B23:B24", edit(report, "B23:B24")],
+    ["a paste into B2:B3", edit(report, "B2:B3")],
     ["an edit of B30 in the spill", edit(report, "B30", "5%")],
     ["an edit of B2 on the Holdings tab", edit(book.tab("Holdings"), "B2", "5%")],
-    ["an edit of B23 on the hidden tab", edit(x, THRESHOLD_CELL, "5%")],
+    ["an edit of B2 on the hidden tab", edit(x, THRESHOLD_CELL, "5%")],
     ["an edit event with no range", {}],
     ["an edit of the threshold cell with no value", edit(report, THRESHOLD_CELL)],
     ["an edit of the threshold to 150%", edit(report, THRESHOLD_CELL, "150%")],
@@ -4355,7 +4391,7 @@ function main() {
   );
 
   const atOne = checkChart("threshold 1% after the refresh");
-  report.grid[22][1] = 0.05;
+  report.grid[1][1] = 0.05;
   const raised = runEdit("an edit of the threshold to 5%", edit(report, THRESHOLD_CELL, "5%"));
   check(
     JSON.stringify(raised) === JSON.stringify(["flush", "removeChart", "insertChart"]),
@@ -4368,7 +4404,7 @@ function main() {
       `chart moves up from row ${atOne.anchor} to row ${atFive.anchor}`,
   );
 
-  report.grid[22][1] = 1;
+  report.grid[1][1] = 1;
   const none = runEdit("an edit of the threshold to 100%", edit(report, THRESHOLD_CELL, "1"));
   check(
     JSON.stringify(none) === JSON.stringify(["flush", "removeChart"]) && companyCharts(report).length === 0,
@@ -4376,7 +4412,7 @@ function main() {
       `the chart and inserts none (${none.join(", ")})`,
   );
 
-  report.grid[22][1] = 0.01;
+  report.grid[1][1] = 0.01;
   const back = runEdit("an edit of the threshold back to 1%", edit(report, THRESHOLD_CELL, "0.01"));
   check(
     JSON.stringify(back) === JSON.stringify(["flush", "insertChart"]),
@@ -4459,7 +4495,7 @@ function main() {
   );
 
   const staleFrom = lag(2);
-  report.grid[22][1] = 0.05;
+  report.grid[1][1] = 0.05;
   const lagged = runEdit(
     "an edit of the threshold to 5% while the spill lags two reads",
     edit(report, THRESHOLD_CELL, "5%"),
@@ -4483,7 +4519,7 @@ function main() {
   state.sleeps.length = 0;
   warnFrom = state.logged.length;
   lag(Infinity);
-  report.grid[22][1] = 0.01;
+  report.grid[1][1] = 0.01;
   const stale = runEdit(
     "an edit of the threshold to 1% while the spill stays stale",
     edit(report, THRESHOLD_CELL, "0.01"),
@@ -4832,12 +4868,12 @@ function main() {
     rowsNow.map(([start, seconds], n) => [`${15 + n}`, new Date(start).toISOString(), seconds]),
   );
 
-  console.log("\n== Run-time formulas B9 and B10 of the report");
-  const lastFormula = report.cell("B9");
-  const averageFormula = report.cell("B10");
+  console.log("\n== Run-time formulas B11 and B12 of the report");
+  const lastFormula = report.cell("B11");
+  const averageFormula = report.cell("B12");
   check(
-    report.cell("A9") === "Last run time" && report.cell("A10") === "Average (last 10)",
-    "A9 and A10 hold the labels of the run time",
+    report.cell("A11") === "Last run time" && report.cell("A12") === "Average (last 10)",
+    "A11 and A12 hold the labels of the run time",
   );
   const known = (seconds) => {
     const sheet = new FakeSheet(EXPOSURE_TAB, 30, 4, []);
@@ -4876,7 +4912,7 @@ function main() {
     near(calculate(averageFormula, x), recorded.reduce((a, b) => a + b, 0) / 10),
     "B10 gives the average of the 10 kept runs of the Exposure tab",
   );
-  table(["block", "seconds, newest first", "B9", "B10"], formulaRows);
+  table(["block", "seconds, newest first", "B11", "B12"], formulaRows);
 
   console.log("\n== Describe a fund: the sidebar page and the report text");
   logFrom = state.log.length;
@@ -4981,7 +5017,7 @@ function main() {
   }
   const note = report.cell(NOTE_CELL);
   check(
-    report.cell("A3") === "Status" &&
+    report.cell("A5") === "Status" &&
       note.includes('n&IF(n=1," holding ("," holdings (")') &&
       note.includes('" of your portfolio) "&IF(n=1,"is a fund","are funds")&" not looked through."'),
     `${NOTE_CELL}, under the status cell, counts the funds not looked through and their share`,
@@ -5396,7 +5432,7 @@ function main() {
       companyLine("D", { FG: 0.004 }),
     ],
   };
-  book.tab(REPORT_TAB).grid[22][1] = 0.02;
+  book.tab(REPORT_TAB).grid[1][1] = 0.02;
   const sevenState = book.tab(REPORT_TAB).state();
   state.fetchHandler = () => fakeResponse(200, JSON.stringify(sevenAnswer));
   logFrom = state.log.length;
@@ -5433,7 +5469,7 @@ function main() {
 
   console.log("\n== Run 18: a synthetic answer with a held fund, a fund that did not enter, and a preferred line");
   replaceHoldings(HOLDINGS_ROWS);
-  book.tab(REPORT_TAB).grid[22][1] = 0.01;
+  book.tab(REPORT_TAB).grid[1][1] = 0.01;
   /**
    * A fetch handler that answers with the synthetic answer of the positions
    * of the request, with a cap of `maxLines` lines, and sends no request.
@@ -5538,9 +5574,9 @@ function main() {
       "says and more when the cap line holds stock",
   );
   check(
-    report.cell("C19").endsWith(",'Concentration.Exposure'!$AX$5:$AX,\"<>other:lines\")") &&
+    report.cell("C21").endsWith(",'Concentration.Exposure'!$AX$5:$AX,\"<>other:lines\")") &&
       report
-        .cell("C20")
+        .cell("C22")
         .endsWith(
           "+SUMIFS('Concentration.Exposure'!$BD$5:$BD,'Concentration.Exposure'!$BE$5:$BE,\"stock\",'Concentration.Exposure'!$AX$5:$AX,\"other:lines\")",
         ),
@@ -5894,8 +5930,8 @@ function main() {
 
   console.log("\n== Run 12: tabs with an older layout version are replaced and keep both typed values");
   keptExposure.grid[2][1] = layoutVersion - 1;
-  keptReport.grid[22][1] = 0.03;
-  keptReport.grid[23][1] = 0.25;
+  keptReport.grid[1][1] = 0.03;
+  keptReport.grid[2][1] = 0.25;
   runStarts.length = 0;
   logFrom = state.log.length;
   pause(2);
@@ -5912,6 +5948,30 @@ function main() {
   );
   checkReplaced("run 12", 0.03, 0.25);
   checkRecorded("run 12", runTwelve);
+
+  console.log("\n== Run 12b: a report tab of the older layout with the two cells in rows 23 and 24 keeps both values");
+  book.tab(EXPOSURE_TAB).grid[2][1] = layoutVersion - 1;
+  const olderReport = new FakeSheet(REPORT_TAB, NEW_ROWS, NEW_COLUMNS, state.log);
+  olderReport.grid[0][0] = "Concentration";
+  olderReport.grid[2][0] = "Status";
+  olderReport.grid[22][0] = "Threshold";
+  olderReport.grid[22][1] = 0.035;
+  olderReport.grid[23][0] = "Overlap minimum";
+  olderReport.grid[23][1] = 0.3;
+  olderReport.grid[25][0] = "=LET(old,1,old)";
+  book.sheets.splice(book.sheets.indexOf(book.tab(REPORT_TAB)), 1, olderReport);
+  runStarts.length = 0;
+  logFrom = state.log.length;
+  pause(2);
+  const runTwelveB = timedRun();
+  check(tabOps(logFrom).length === 4, `run 12b deletes and creates both tabs (${tabOps(logFrom).join("; ")})`);
+  check(!book.sheets.includes(olderReport), "run 12b: the report tab of the older layout does not stay");
+  check(
+    book.tab(REPORT_TAB).cell(THRESHOLD_CELL) === 0.035 && book.tab(REPORT_TAB).cell(MINIMUM_CELL) === 0.3,
+    `run 12b: the new report tab keeps the threshold of 3.5% and the overlap minimum of 30% in ${THRESHOLD_CELL} and ${MINIMUM_CELL}`,
+  );
+  checkReplaced("run 12b", 0.035, 0.3);
+  checkRecorded("run 12b", runTwelveB);
 
   console.log("\n== Run 13: the report tab is absent, and the hidden tab holds the current layout version");
   const stayed = book.tab(EXPOSURE_TAB);
@@ -5965,7 +6025,7 @@ function main() {
   checkRecorded("run 13", runThirteen);
 
   console.log("\n== Run 14: the hidden tab is absent, so the script replaces the report tab too");
-  book.tab(REPORT_TAB).grid[22][1] = 0.04;
+  book.tab(REPORT_TAB).grid[1][1] = 0.04;
   book.sheets.splice(book.sheets.indexOf(book.tab(EXPOSURE_TAB)), 1);
   runStarts.length = 0;
   logFrom = state.log.length;

@@ -46,7 +46,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads, or changes the format of a cell. The
  * next refresh then replaces the two tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 17;
+const LAYOUT_VERSION = 18;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -77,30 +77,58 @@ const INPUTS = {
 };
 
 /**
- * The count of rows at the top of a report tab that readInputs reads.
+ * The help text of the threshold cell and of the overlap minimum cell, in
+ * column C of the row of each cell. Each text is longer than column C. The
+ * cells to its right in the same row are empty, so the text shows across
+ * them.
+ */
+const THRESHOLD_HELP =
+  "Enter a percentage. Each company whose securities are greater than or equal to the value are included in the company rankings.";
+const OVERLAP_HELP =
+  "Enter a percentage. The fund overlap list under the company table shows each pair of funds at or above it.";
+
+/**
+ * The count of rows at the top of a report tab that readInputs and onEdit
+ * read. The rows also hold the two labels of a tab of an older layout, in
+ * which the labels are in rows 23 and 24.
  */
 const INPUT_ROWS = 40;
+
+/**
+ * The row of the threshold cell, and the row of the overlap minimum cell.
+ * Both cells are in column B. The label of each cell is in column A, and its
+ * help text is in column C. The two rows are under the title row, in the
+ * REPORT_FROZEN_ROWS frozen rows, so both cells stay on the screen when a
+ * person scrolls the report.
+ */
+const THRESHOLD_ROW = 2;
+const OVERLAP_ROW = 3;
+
+/**
+ * The count of frozen rows of the report tab: the title row and the two
+ * rows of the cells that the person types in.
+ */
+const REPORT_FROZEN_ROWS = OVERLAP_ROW;
+
+/**
+ * The row of the subtitle in column B and of the note on the held fund
+ * reports in column D. The row is the first row under the frozen rows.
+ */
+const SUBTITLE_ROW = REPORT_FROZEN_ROWS + 1;
 
 /**
  * The row of the status cell and the row of the total value cell of the
  * report tab. Both cells are in column B.
  */
-const STATUS_ROW = 3;
-const TOTAL_ROW = 6;
+const STATUS_ROW = 5;
+const TOTAL_ROW = 8;
 
 /**
  * The row of the header of the block of the security measures, and the row
  * of the header of the composition block.
  */
-const STOCKS_ROW = 12;
-const COMPOSITION_ROW = 18;
-
-/**
- * The row of the threshold cell, and the row of the overlap minimum cell.
- * Both cells are in column B.
- */
-const THRESHOLD_ROW = 23;
-const OVERLAP_ROW = 24;
+const STOCKS_ROW = 14;
+const COMPOSITION_ROW = 20;
 
 /**
  * The row of the report spill. The spill holds the section Holdings,
@@ -108,7 +136,7 @@ const OVERLAP_ROW = 24;
  * it. The row count of the section Holdings changes with the Holdings
  * tab, so the header of the company table is inside the spill.
  */
-const REPORT_ROW = 26;
+const REPORT_ROW = 28;
 
 /**
  * The share of the portfolio at or above which a holding with lines of the
@@ -158,9 +186,11 @@ const DISCLAIMER =
 
 /**
  * The first row of the spill of the fund table, in column D, and the last
- * row that the spill can use. The report spill starts in row REPORT_ROW.
+ * row that the spill can use. The header of the fund table is in the row
+ * above FUND_ROW, the row of the status cell. The report spill starts in row
+ * REPORT_ROW.
  */
-const FUND_ROW = 4;
+const FUND_ROW = 6;
 const FUND_LAST_ROW = REPORT_ROW - 1;
 
 /**
@@ -196,6 +226,14 @@ const CHART_OTHER_COLOR = "#a9a7a0";
  * The width in pixels of each column of the report tab from A to F.
  */
 const REPORT_WIDTHS = { A: 250, B: 300, C: 150, D: 175, E: 110, F: 180 };
+
+/**
+ * The width in pixels of the columns G and H of the report tab, and of each
+ * column after H. The columns G and H hold the headers "Fund 1 % of
+ * portfolio" and "Fund 2 % of portfolio" of the fund overlap table.
+ */
+const REPORT_SHARE_WIDTH = 145;
+const REPORT_FUND_WIDTH = 96;
 
 /**
  * The size of each bar chart in pixels, and the count of blank rows of the
@@ -330,21 +368,21 @@ function exposureColumn(letter) {
 }
 
 /**
- * The formula of B6: the sum of the Value column of the Holdings tab. The
+ * The formula of B8: the sum of the Value column of the Holdings tab. The
  * formula finds the column by the header text in row 1, with the match rule
  * of findColumns. INDIRECT with the R1C1 text "C" and the column number reads
  * the whole column, so the formula holds no column letter. The header text in
- * row 1 adds nothing to the sum. When row 1 holds no Value column, B6 shows a
+ * row 1 adds nothing to the sum. When row 1 holds no Value column, B8 shows a
  * text in place of a number.
  */
 const TOTAL_FORMULA = `=LET(c,XMATCH(TRUE,ARRAYFORMULA(EXACT(TRIM(Holdings!$1:$1),"Value"))),
 IF(ISNA(c),"No Holdings column Value",SUM(INDIRECT("Holdings!C"&c,FALSE))))`;
 
 /**
- * The formula of D4: the funds that the route looked through, with the
- * report date, the count of holdings, the weight, and the covered part. A
- * fund of a mix shows the holding and the ticker of the fund. When the route
- * looked through no fund, D4 shows a text.
+ * The formula of D6: the funds that the route looked through, with the
+ * report date, the count of holdings, the share of the portfolio, and the
+ * covered part. A fund of a mix shows the holding and the ticker of the
+ * fund. When the route looked through no fund, D6 shows a text.
  */
 function fundsFormula() {
   const x = exposureColumns();
@@ -357,8 +395,8 @@ CHOOSECOLS(r,3,5,6),ARRAYFORMULA(CHOOSECOLS(r,7)/CHOOSECOLS(r,6)))))`;
 }
 
 /**
- * The formula of B9: the seconds of the newest run in A16:B25 of the tab
- * Concentration.Exposure. B9 is empty when no run is recorded.
+ * The formula of B11: the seconds of the newest run in A16:B25 of the tab
+ * Concentration.Exposure. B11 is empty when no run is recorded.
  */
 function runLastFormula() {
   const cell = exposure(`B${RUN_HEADER_ROW + 1}`);
@@ -366,9 +404,9 @@ function runLastFormula() {
 }
 
 /**
- * The formula of B10: the average seconds of the runs in A16:B25 of the tab
+ * The formula of B12: the average seconds of the runs in A16:B25 of the tab
  * Concentration.Exposure. The block keeps RUN_LIMIT runs at most, so the
- * average uses each recorded run when fewer than RUN_LIMIT exist. B10 is
+ * average uses each recorded run when fewer than RUN_LIMIT exist. B12 is
  * empty when no run is recorded.
  */
 function runAverageFormula() {
@@ -386,7 +424,7 @@ function equityFormula(name) {
 }
 
 /**
- * The formula of A17: one text when the last good answer holds lines and no
+ * The formula of A19: one text when the last good answer holds lines and no
  * equity block. The cell is empty before the first good refresh.
  */
 function noStockFormula() {
@@ -409,7 +447,7 @@ uu,IFNA(FILTER(${exposureColumn(x.unseenWeight)},${id}<>""),0),`;
 }
 
 /**
- * The formula of B4, under the status cell: the count of the holdings that
+ * The formula of B6, under the status cell: the count of the holdings that
  * the route cannot look through and that have no mix, with their share of
  * the portfolio. The formula reads the weights of the unseen block. The cell
  * is empty when no such holding exists.
@@ -731,7 +769,7 @@ IFNA(VSTACK("${HOLDINGS_TITLE}",
  MAKEARRAY(${CHART_BAND_ROWS},1,LAMBDA(i,j,"")),
  "Fund overlap",
  "${OVERLAP_NOTE}",
- {"Fund 1","Fund 2","","","Overlap","Shared securities","Fund 1 weight","Fund 2 weight"},
+ {"Fund 1","Fund 2","","","Overlap","Shared securities","Fund 1 % of portfolio","Fund 2 % of portfolio"},
  plist,
  "",
  "${UNSEEN_TITLE}",
@@ -1268,11 +1306,16 @@ function exposureLayout() {
 /**
  * The layout of the tab Concentration. `inputs` holds the value of the
  * threshold cell and of the overlap minimum cell, by the names of INPUTS. An
- * absent name gets the value of INPUTS. A person can change both cells. B1
- * holds the disclaimer. B4, under the status cell, counts the holdings that
- * are funds not looked through. B9 and B10 show the seconds of the last good
- * refresh and the average of the recorded refreshes. The header of the
- * security measures carries the coverage label.
+ * absent name gets the value of INPUTS. A person can change both cells.
+ *
+ * The frozen rows hold the title in A1, the disclaimer in B1, and the rows
+ * THRESHOLD_ROW and OVERLAP_ROW of the two cells, each with its label in
+ * column A and its help text in column C. Row SUBTITLE_ROW, under the frozen
+ * rows, holds the subtitle in column B and the note on the held fund reports
+ * in column D. B6, under the status cell, counts the holdings that are funds
+ * not looked through. B11 and B12 show the seconds of the last good refresh
+ * and the average of the recorded refreshes. The header of the security
+ * measures carries the coverage label.
  *
  * The report spill starts in row REPORT_ROW, and its row count changes with
  * the Holdings tab. So the conditional formats find the titles, the chart
@@ -1296,13 +1339,20 @@ function reportLayout(inputs = {}) {
     rows: TAB_ROWS,
     columns: REPORT_COLUMNS,
     hidden: false,
-    frozenRows: 2,
-    columnWidths: { ...REPORT_WIDTHS, [`G:${last}`]: 96 },
+    frozenRows: REPORT_FROZEN_ROWS,
+    columnWidths: { ...REPORT_WIDTHS, "G:H": REPORT_SHARE_WIDTH, [`I:${last}`]: REPORT_FUND_WIDTH },
     cells: [
       { range: "A1:B1", values: [["Concentration", DISCLAIMER]] },
-      { range: "B2", values: [["Securities by company, with a look inside each fund."]] },
       {
-        range: "D2",
+        range: `A${THRESHOLD_ROW}:C${OVERLAP_ROW}`,
+        values: [
+          [INPUTS.threshold.label, threshold, THRESHOLD_HELP],
+          [INPUTS.overlapMinimum.label, overlapMinimum, OVERLAP_HELP],
+        ],
+      },
+      { range: `B${SUBTITLE_ROW}`, values: [["Securities by company, with a look inside each fund."]] },
+      {
+        range: `D${SUBTITLE_ROW}`,
         values: [
           [
             "A fund that holds other funds uses the newest report of each held fund. The date of a held report can differ from the date in this table.",
@@ -1324,7 +1374,7 @@ function reportLayout(inputs = {}) {
       },
       {
         range: `D${fund - 1}:H${fund - 1}`,
-        values: [["Fund looked through", "Report date", "Holdings", "Weight", "Covered"]],
+        values: [["Fund looked through", "Report date", "Holdings", "% of portfolio", "Covered"]],
       },
       { range: `D${fund}`, values: [[fundsFormula()]] },
       {
@@ -1355,27 +1405,22 @@ function reportLayout(inputs = {}) {
           [OTHER_TITLE, `=IF(ISNUMBER(${total}),C${comp + 3}*${total},"")`, otherSumFormula()],
         ],
       },
-      {
-        range: `A${THRESHOLD_ROW}:C${OVERLAP_ROW}`,
-        values: [
-          [
-            INPUTS.threshold.label,
-            threshold,
-            "Type a percent. Each company whose securities are at or above it gets a row.",
-          ],
-          [
-            INPUTS.overlapMinimum.label,
-            overlapMinimum,
-            "Type a percent. The fund overlap list under the company table shows each pair of funds at or above it.",
-          ],
-        ],
-      },
       { range: `A${first}`, values: [[reportFormula()]] },
     ],
     styles: [
       { range: "A1", bold: true, fontSize: 16 },
-      { range: "B1:B2", color: "#6b6962", italic: true },
-      { range: "D2", color: "#6b6962", italic: true },
+      { range: "B1", color: "#6b6962", italic: true },
+      { range: `A${THRESHOLD_ROW}:A${OVERLAP_ROW}`, bold: true },
+      {
+        range: `B${THRESHOLD_ROW}:B${OVERLAP_ROW}`,
+        numberFormat: "0.00%",
+        bold: true,
+        background: "#fff4c7",
+        align: "right",
+      },
+      { range: `C${THRESHOLD_ROW}:C${OVERLAP_ROW}`, color: "#6b6962", italic: true },
+      { range: `B${SUBTITLE_ROW}`, color: "#6b6962", italic: true },
+      { range: `D${SUBTITLE_ROW}`, color: "#6b6962", italic: true },
       { range: `A${status}:A${comp + 3}`, color: "#57554f" },
       { range: `B${status + 2}`, numberFormat: "yyyy-mm-dd hh:mm" },
       { range: `B${TOTAL_ROW}`, numberFormat: "$#,##0.00", bold: true },
@@ -1393,15 +1438,6 @@ function reportLayout(inputs = {}) {
       { range: `B${comp}:C${comp}`, align: "right" },
       { range: `B${comp + 1}:B${comp + 3}`, numberFormat: "$#,##0.00" },
       { range: `C${comp + 1}:C${comp + 3}`, numberFormat: "0.00%" },
-      { range: `A${THRESHOLD_ROW}:A${OVERLAP_ROW}`, bold: true },
-      {
-        range: `B${THRESHOLD_ROW}:B${OVERLAP_ROW}`,
-        numberFormat: "0.00%",
-        bold: true,
-        background: "#fff4c7",
-        align: "right",
-      },
-      { range: `C${THRESHOLD_ROW}:C${OVERLAP_ROW}`, color: "#6b6962", italic: true },
       { range: `A${first}:A`, numberFormat: "0" },
       { range: `D${first}:D`, numberFormat: "$#,##0.00", align: "right" },
       { range: `E${first}:E`, numberFormat: "0.00%", align: "right" },
@@ -1459,8 +1495,8 @@ function reportLayout(inputs = {}) {
       },
     ],
     validation: [
-      { range: `B${THRESHOLD_ROW}`, min: 0, max: 1, message: "Type a percent from 0% to 100%, such as 1%." },
-      { range: `B${OVERLAP_ROW}`, min: 0, max: 1, message: "Type a percent from 0% to 100%, such as 10%." },
+      { range: `B${THRESHOLD_ROW}`, min: 0, max: 1, message: "Enter a percentage from 0% to 100%, such as 1%." },
+      { range: `B${OVERLAP_ROW}`, min: 0, max: 1, message: "Enter a percentage from 0% to 100%, such as 10%." },
     ],
   };
 }
