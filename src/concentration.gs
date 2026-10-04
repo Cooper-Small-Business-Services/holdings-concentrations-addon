@@ -175,9 +175,9 @@ const FUND_FIELDS = [
 const MIX_FIELDS = ["mixId", "mixWeight", "entered", "partTicker", "partWeight", "substitute"];
 
 /**
- * The fields of each line, in the order of the columns AR:AX. Column AY
+ * The fields of each line, in the order of the columns AX:BD. Column BE
  * holds the part of the line that the row gives: STOCK_PART or OTHER_PART.
- * Column AZ holds the direct weight of the row.
+ * Column BF holds the direct weight of the row.
  */
 const LINE_FIELDS = ["key", "name", "ticker", "lei", "class", "weight", "stockWeight"];
 
@@ -211,6 +211,53 @@ const OWN_FIELDS = ["ownKey", "ownName", "ownClass", "ownWeight", "ownSources"];
  * the positions that gave weight to the group.
  */
 const GROUP_FIELDS = ["groupClass", "groupWeight", "groupCount", "groupSources"];
+
+/**
+ * The fields of the unread block, in the order of the columns AR:AV. The
+ * block holds each part of notLookedThroughWeight that the unseen block does
+ * not hold. A row holds the kind of the row, the position id, the ticker of
+ * the fund in the mix, the class, and the weight. The kinds are the values
+ * of UNREAD_KINDS.
+ */
+const UNREAD_FIELDS = ["unreadKind", "unreadId", "unreadPart", "unreadClass", "unreadWeight"];
+
+/**
+ * The kinds of the rows of the unread block:
+ *
+ * - position: a position with no mix that the route did not look through,
+ *   in a class other than stock and unknown. The unseen block holds the
+ *   lines of the class unknown.
+ * - part: a fund of a mix that the route did not look through.
+ * - rest: the part of a mix that its funds do not describe.
+ * - direct: the sum of the positions with no mix of the class stock.
+ * - held: the sum of the held funds of the class fund inside the funds that
+ *   the route looked through.
+ * - residual: the sum of the residual lines of the funds that the route
+ *   looked through.
+ *
+ * Each row holds a weight other than 0.
+ */
+const UNREAD_KINDS = {
+  position: "position",
+  part: "part",
+  rest: "rest",
+  direct: "direct",
+  held: "held",
+  residual: "residual",
+};
+
+/**
+ * The smallest share of a mix that its funds do not describe and that
+ * enters as a line of its own, as the route rules it.
+ */
+const REST_FLOOR = 1e-9;
+
+/**
+ * The first schema version of the answer whose residual line can hold a
+ * weight below 0: major, minor. In an earlier version, the residual line of
+ * a fund holds a weight of 0 or more.
+ */
+const SIGNED_RESIDUAL_VERSION = [1, 11];
 
 /**
  * The part name of a row that holds the stock part of a line.
@@ -275,29 +322,34 @@ const OWN_COLUMN = STOCK_FUND_COLUMN + STOCK_FUND_FIELDS.length + 1;
 const GROUP_COLUMN = OWN_COLUMN + OWN_FIELDS.length + 1;
 
 /**
- * The first column of the lines block, AR.
+ * The first column of the unread block, AR.
  */
-const LINE_COLUMN = GROUP_COLUMN + GROUP_FIELDS.length + 1;
+const UNREAD_COLUMN = GROUP_COLUMN + GROUP_FIELDS.length + 1;
 
 /**
- * The column of the part name of each row of the lines block, AY.
+ * The first column of the lines block, AX.
+ */
+const LINE_COLUMN = UNREAD_COLUMN + UNREAD_FIELDS.length + 1;
+
+/**
+ * The column of the part name of each row of the lines block, BE.
  */
 const PART_COLUMN = LINE_COLUMN + LINE_FIELDS.length;
 
 /**
- * The column of the direct weight of each row of the lines block, AZ: the
+ * The column of the direct weight of each row of the lines block, BF: the
  * part weight of the row minus the cells of the positions that the route
  * looked through.
  */
 const DIRECT_COLUMN = PART_COLUMN + 1;
 
 /**
- * The first column of the sources block, BA. Each position gets one column.
+ * The first column of the sources block, BG. Each position gets one column.
  */
 const SOURCE_COLUMN = DIRECT_COLUMN + 1;
 
 /**
- * The first column of the company chart block, IT. One empty column separates
+ * The first column of the company chart block, IZ. One empty column separates
  * it from the column of position MAX_POSITIONS. The block holds a header in
  * row HEADER_ROW and CHART_ROWS data rows. Its columns are the company name,
  * Direct, CHART_FUNDS fund columns, and Other funds. ensureTabs writes the
@@ -316,7 +368,7 @@ const CHART_FUNDS = 5;
 const CHART_BLOCK_WIDTH = CHART_FUNDS + 3;
 
 /**
- * The column of the anchor cell of the company chart, JC. One empty column
+ * The column of the anchor cell of the company chart, JI. One empty column
  * separates it from the company chart block. Row HEADER_ROW holds its label,
  * and row FIRST_DATA_ROW holds the anchor cell: the row of the report tab
  * where the company chart starts. ensureTabs writes the anchor cell after
@@ -325,7 +377,7 @@ const CHART_BLOCK_WIDTH = CHART_FUNDS + 3;
 const ANCHOR_COLUMN = CHART_COLUMN + CHART_BLOCK_WIDTH + 1;
 
 /**
- * The first column of the holdings chart block, JE. One empty column
+ * The first column of the holdings chart block, JK. One empty column
  * separates it from the anchor cell. The block holds a header in row
  * HEADER_ROW and HOLDINGS_CHART_ROWS data rows. Its columns are the label of
  * each holding group and the share of the portfolio of the group. ensureTabs
@@ -343,7 +395,7 @@ const HOLDINGS_CHART_ROWS = MAX_POSITIONS;
 const HOLDINGS_BLOCK_WIDTH = 2;
 
 /**
- * The column of the holdings anchor cell, JH. One empty column separates it
+ * The column of the holdings anchor cell, JN. One empty column separates it
  * from the holdings chart block. Row HEADER_ROW holds its label, and row
  * FIRST_DATA_ROW holds the anchor cell: the row of the report tab where the
  * holdings chart starts. ensureTabs writes the anchor cell after both tabs
@@ -919,7 +971,7 @@ function sourceOf(map, id) {
  * answer. A row holds the fields of LINE_FIELDS, then the part name, then
  * one cell for each position id in the order of the request. writeAnswer
  * puts the direct weight of each row between the part name and the cells,
- * and writes the rows from AR5.
+ * and writes the rows from AX5.
  *
  * A cell of a stock row holds the stock weight that came through the
  * position: the entry of stockSources. A cell of an other row holds the
@@ -1147,6 +1199,141 @@ function stockFundRows(parts, ids, funds) {
 }
 
 /**
+ * True when the residual line of the answer can hold a weight below 0: the
+ * schema version of the meta block is SIGNED_RESIDUAL_VERSION or later. An
+ * answer with no version text of the form major.minor gives false.
+ */
+function signedResidual(meta) {
+  const text = meta !== null && typeof meta === "object" ? cellText(meta.schemaVersion) : "";
+  const match = /^(\d+)\.(\d+)$/.exec(text);
+  if (match === null) return false;
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  const [firstMajor, firstMinor] = SIGNED_RESIDUAL_VERSION;
+  return major > firstMajor || (major === firstMajor && minor >= firstMinor);
+}
+
+/**
+ * A ticker in the form that the route gives in the funds block: no white
+ * space at the two ends, no leading `$`, upper case, and a hyphen for each
+ * dot.
+ */
+function routeTicker(value) {
+  return cellText(value).replace(/^\$/, "").toUpperCase().replace(/\./g, "-");
+}
+
+/**
+ * The class of the line of a fund of a mix that the route did not look
+ * through. The line is the first part row whose key is `ticker:` and the
+ * ticker, or whose ticker is the ticker, in the route form. A line of the
+ * class stock gives stock. When no part row names the ticker, the class is
+ * fund for a ticker that the funds block names, and other for another
+ * ticker. The cap line can hold such a small line.
+ */
+function partClass(parts, ticker, named) {
+  const want = routeTicker(ticker);
+  const keyAt = LINE_FIELDS.indexOf("key");
+  const tickerAt = LINE_FIELDS.indexOf("ticker");
+  const row = parts.find((cells) => String(cells[keyAt]) === `ticker:${want}` || routeTicker(cells[tickerAt]) === want);
+  if (row !== undefined) return row[LINE_FIELDS.indexOf("class")];
+  return named ? "fund" : "other";
+}
+
+/**
+ * The rows of the unread block, with the fields of UNREAD_FIELDS. The rows
+ * and the unseen block together hold each part of notLookedThroughWeight
+ * of the answer, so the sum of their weights is that measure.
+ *
+ * For each position of the request, in the request order:
+ *
+ * - A position with no mix that the funds block does not name as a fund
+ *   that entered is a direct position. Its cells on the rows of the stock
+ *   part add to the row direct. Its cells on the rows of the other part
+ *   whose class is not unknown give one row position, with the class of the
+ *   row with the largest cell. The unseen block holds its cells on the rows
+ *   of the class unknown.
+ * - A position with a mix gives one row part for each fund of the mix that
+ *   the funds block does not name as a fund of the position that entered,
+ *   at the weight of the position times the share of the fund. The class
+ *   comes from partClass. When the funds of the mix describe less than the
+ *   whole position by more than REST_FLOOR, one row rest follows, at the
+ *   weight of the position times the share that they do not describe.
+ *
+ * Then one row direct, one row held, and one row residual follow, each
+ * when the absolute value of its weight is above DIRECT_FLOOR. The row held
+ * adds the weight of each held fund
+ * of the funds block that did not enter, and the weight minus the covered
+ * weight of each held fund that entered. The row residual adds the weight
+ * minus the covered weight of each fund that entered. When `signed` is
+ * false, the answer floors each residual line at 0, so the row adds 0 for a
+ * fund whose covered weight is above its weight. `mixes` holds the rows of
+ * the mix block.
+ */
+function unreadRows(parts, ids, funds, mixes, signed) {
+  const top = topFunds(funds);
+  const entered = new Set(fundIds(funds));
+  const mixed = new Map();
+  for (const row of mixes) {
+    if (!mixed.has(row[0])) mixed.set(row[0], []);
+    mixed.get(row[0]).push(row);
+  }
+  const kindAt = LINE_FIELDS.indexOf("class");
+  const rows = [];
+  let direct = 0;
+  ids.forEach((id, i) => {
+    const mix = mixed.get(id);
+    if (mix !== undefined) {
+      const looked = new Set(top.filter((fund) => cellValue(fund.id) === id).map((fund) => routeTicker(fund.ticker)));
+      const named = new Set(
+        funds
+          .filter((fund) => fund !== null && typeof fund === "object" && cellValue(fund.id) === id)
+          .map((fund) => routeTicker(fund.ticker)),
+      );
+      let described = 0;
+      for (const [, weight, , ticker, share] of mix) {
+        described += share;
+        const key = routeTicker(ticker);
+        if (looked.has(key)) continue;
+        rows.push([UNREAD_KINDS.part, id, ticker, partClass(parts, ticker, named.has(key)), weight * share]);
+      }
+      if (1 - described > REST_FLOOR)
+        rows.push([UNREAD_KINDS.rest, id, "", UNKNOWN_CLASS, mix[0][1] * (1 - described)]);
+      return;
+    }
+    if (entered.has(id)) return;
+    let other = 0;
+    let largest = 0;
+    let kind = "";
+    for (const row of parts) {
+      const cell = cellNumber(sourceCell(row, i));
+      if (cell === 0) continue;
+      if (row[LINE_FIELDS.length] === STOCK_PART) {
+        direct += cell;
+        continue;
+      }
+      if (row[kindAt] === UNKNOWN_CLASS) continue;
+      other += cell;
+      if (Math.abs(cell) > largest) {
+        largest = Math.abs(cell);
+        kind = row[kindAt];
+      }
+    }
+    if (other !== 0) rows.push([UNREAD_KINDS.position, id, "", kind, other]);
+  });
+  let held = 0;
+  let residual = 0;
+  for (const fund of funds) {
+    if (fund === null || typeof fund !== "object" || !isNumber(fund.weight)) continue;
+    const open = fund.weight - cellNumber(fund.coveredWeight);
+    if (cellValue(fund.heldBy) !== "") held += fund.entered === false ? fund.weight : open;
+    else if (isTopFund(fund)) residual += signed ? open : Math.max(0, open);
+  }
+  if (Math.abs(direct) > DIRECT_FLOOR) rows.push([UNREAD_KINDS.direct, "", "", STOCK_CLASS, direct]);
+  if (Math.abs(held) > DIRECT_FLOOR) rows.push([UNREAD_KINDS.held, "", "", "fund", held]);
+  if (Math.abs(residual) > DIRECT_FLOOR) rows.push([UNREAD_KINDS.residual, "", "", "cash", residual]);
+  return rows;
+}
+
+/**
  * Write the status text into B1 and the time of the run into B2 with one
  * call.
  */
@@ -1214,9 +1401,9 @@ function clearStale(sheet, topLast, lineLast, lastColumn) {
 
 /**
  * Set the number format `@` on the text columns from row 5: D:E, G, P:Q, U,
- * X, AB, AE, AG:AI, AK, AM, AP, and AR:AU. Also set it on row 4 of the
- * sources block, BA4:IR4. A name that starts with `=`, `+`, `-`, or `@` then
- * stays text, and a ticker such as 0700 stays text.
+ * X, AB, AE, AG:AI, AK, AM, AP, AR:AU, and AX:BA. Also set it on row 4 of
+ * the sources block, BG4:IX4. A name that starts with `=`, `+`, `-`, or `@`
+ * then stays text, and a ticker such as 0700 stays text.
  */
 function setTextFormat(sheet) {
   const dataRows = sheet.getMaxRows() - HEADER_ROW;
@@ -1232,6 +1419,7 @@ function setTextFormat(sheet) {
   text(OWN_COLUMN + OWN_FIELDS.indexOf("ownSources"), 1);
   text(GROUP_COLUMN, 1);
   text(GROUP_COLUMN + GROUP_FIELDS.indexOf("groupSources"), 1);
+  text(UNREAD_COLUMN, 4);
   text(LINE_COLUMN, 4);
   sheet.getRange(HEADER_ROW, SOURCE_COLUMN, 1, MAX_POSITIONS).setNumberFormat("@");
 }
@@ -1255,11 +1443,12 @@ function placeBlock(grid, first, row, column, values) {
  * column before the lines block and down to the last row of the longest of
  * those blocks: the labels of row 4, the measures, the equity measures, the
  * funds, the overlaps, the mix block, the unseen block, the stock fund block,
- * the own block, and the group block. It also holds column B of the run-time
- * block and of the header of the equity block, and the function copies those
- * cells as they are. The second call writes the lines block, the direct
- * weights, and the sources block, from row 4 down to the last part row and
- * from AR to the column of the last position. Row 4 of that block holds the
+ * the own block, the group block, and the unread block. It also holds column
+ * B of the run-time block and of the header of the equity block, and the
+ * function copies those cells as they are. The second call writes the lines
+ * block, the direct weights, and the sources block, from row 4 down to the
+ * last part row and from AX to the column of the last position. Row 4 of
+ * that block holds the
  * labels and the position ids.
  *
  * Before the two calls, the function fits the grid to the rows of the answer
@@ -1276,9 +1465,10 @@ function writeAnswer(sheet, ids, answer, mixes = []) {
   const stockFunds = stockFundRows(parts, ids, answer.funds);
   const own = ownRows(parts, ids, direct);
   const groups = groupRows(parts, ids, direct);
+  const unread = unreadRows(parts, ids, answer.funds, mixes, signedResidual(answer.meta));
   const topLast = Math.max(
     EQUITY_HEADER_ROW + EQUITY_NAMES.length,
-    ...[funds, overlaps, mixes, unseen, stockFunds, own, groups].map((rows) => HEADER_ROW + rows.length),
+    ...[funds, overlaps, mixes, unseen, stockFunds, own, groups, unread].map((rows) => HEADER_ROW + rows.length),
   );
   const lineLast = HEADER_ROW + parts.length;
   const lastColumn = SOURCE_COLUMN - 1 + ids.length;
@@ -1300,6 +1490,7 @@ function writeAnswer(sheet, ids, answer, mixes = []) {
   placeBlock(top, 2, FIRST_DATA_ROW, STOCK_FUND_COLUMN, stockFunds);
   placeBlock(top, 2, FIRST_DATA_ROW, OWN_COLUMN, own);
   placeBlock(top, 2, FIRST_DATA_ROW, GROUP_COLUMN, groups);
+  placeBlock(top, 2, FIRST_DATA_ROW, UNREAD_COLUMN, unread);
   sheet.getRange(HEADER_ROW, 2, top.length, topWidth).setValues(top);
 
   const labels = sheet.getRange(HEADER_ROW, LINE_COLUMN, 1, SOURCE_COLUMN - LINE_COLUMN).getValues()[0];

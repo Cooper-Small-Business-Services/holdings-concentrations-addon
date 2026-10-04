@@ -28,6 +28,15 @@
  * that the script writes the two data blocks alone, clears the cells of the
  * last answer outside them, and fits the rows of the grid to the answer.
  *
+ * The script also computes the unread block: each part of the weight not
+ * looked through that the unseen block does not hold. The harness computes
+ * the same rows from the lines and the funds of the answer, and compares the
+ * two. It checks two sums on the blocks that the script writes: the rows of
+ * the unseen block and the unread block add up to notLookedThroughWeight
+ * within 0.01%, and the part weights of the lines block add up to
+ * weightSum. A synthetic answer of schema version 1.11 holds a residual line
+ * below 0, so its part weights add up to 1.
+ *
  * Each good run draws the two bar charts of the report tab again: the
  * company chart, then the holdings chart. The fake of the chart builder
  * keeps the ranges, the colors, the title, the anchor, and the options of a
@@ -254,8 +263,8 @@ const LINE_FIELDS = ["key", "name", "ticker", "lei", "class", "weight", "stockWe
  * The first column of each block of the Concentration.Exposure tab: the
  * funds in D, the overlaps in P, the mixes in U, the unseen block in AB, the
  * stock fund block in AE, the own block in AG, the group block in AM, the
- * lines in AR, the part name in AY, the direct weight in AZ, and the sources
- * in BA. Column 1 is A.
+ * unread block in AR, the lines in AX, the part name in BE, the direct
+ * weight in BF, and the sources in BG. Column 1 is A.
  */
 const FUND_AT = 4;
 const OVERLAP_AT = 16;
@@ -264,7 +273,8 @@ const UNSEEN_AT = 28;
 const STOCK_FUND_AT = 31;
 const OWN_AT = 33;
 const GROUP_AT = 39;
-const LINE_AT = 44;
+const UNREAD_AT = 44;
+const LINE_AT = 50;
 const PART_AT = LINE_AT + LINE_FIELDS.length;
 const DIRECT_AT = PART_AT + 1;
 const SOURCE_AT = DIRECT_AT + 1;
@@ -385,7 +395,7 @@ const REPORT_ROW = 26;
  * The texts of the report that a person reads about the funds not looked
  * through.
  */
-const UNSEEN_TITLE = "Funds not looked through";
+const UNSEEN_TITLE = "Holdings not looked through";
 const ADD_MIX_NOTE = "Add its fund mix: Concentration › Describe a fund";
 
 /**
@@ -1401,7 +1411,12 @@ function overlapsOf(funds, lines) {
  *
  * `kinds` holds the direct line of each ticker and the cause of each fund
  * that did not enter. TRUST_KINDS gives the classes trust and cash of a
- * direct position.
+ * direct position. `kinds.funds` can replace OFFLINE_FUNDS, and
+ * `kinds.version` can replace the schema version 1.9. When `kinds.signed`
+ * is true, the residual line of a fund holds the fund weight times 1 minus
+ * the sum of its percents divided by 100, with no floor at 0, as in schema
+ * version 1.11. A residual line below 0 then has the name Liabilities net of
+ * other assets.
  */
 function offlineAnswer(
   positions,
@@ -1457,7 +1472,7 @@ function offlineAnswer(
    * when the ticker is a fund of OFFLINE_FUNDS.
    */
   const enter = (id, ticker, weight, partWeight) => {
-    const holdings = OFFLINE_FUNDS[ticker];
+    const holdings = (kinds.funds ?? OFFLINE_FUNDS)[ticker];
     if (holdings === undefined) {
       const direct = kinds.direct[ticker] ?? { key: `ticker:${ticker}`, name: ticker, ticker, class: "unknown" };
       add(direct, id, weight);
@@ -1480,13 +1495,14 @@ function offlineAnswer(
       if (holding.class !== "fund") lookedThrough += (weight * holding.pct) / 100;
     }
     const covered = holdings.reduce((a, holding) => a + holding.pct, 0) / 100;
+    const negative = kinds.signed === true && covered > 1;
     const residual = {
       key: `residual:${ticker}`,
-      name: "Cash and other net assets",
+      name: negative ? "Liabilities net of other assets" : "Cash and other net assets",
       ticker: null,
       class: "cash",
     };
-    add(residual, id, weight * Math.max(0, 1 - covered));
+    add(residual, id, weight * (kinds.signed === true ? 1 - covered : Math.max(0, 1 - covered)));
     funds.push({
       id,
       ticker,
@@ -1597,7 +1613,7 @@ function offlineAnswer(
     overlaps,
     lines: kept,
     meta: {
-      schemaVersion: "1.9",
+      schemaVersion: kinds.version ?? "1.9",
       source: "Invented data of the offline run",
       pctValueUnit: "percent of net assets",
       disclaimer: "Invented data. Not investment advice.",
@@ -2463,10 +2479,12 @@ function sameRows(a, b) {
 
 /**
  * Check that the computed blocks and the direct weights of the tab hold the
- * values of formulaReference.
+ * values of formulaReference. With an answer, also check the unread block
+ * and the two sums of checkUnread.
  */
-function checkComputed(sheet, name, partCount) {
+function checkComputed(sheet, name, partCount, answer = null) {
   const want = formulaReference(sheet);
+  if (answer !== null) checkUnread(sheet, name, answer);
   const direct = sheet.block(5, DIRECT_AT, partCount, 1).map((cells) => cells[0]);
   check(
     direct.length === want.direct.length && direct.every((v, r) => Math.abs(v - want.direct[r]) < 1e-12),
@@ -2492,6 +2510,126 @@ function checkComputed(sheet, name, partCount) {
 }
 
 /**
+ * The rows that the unread block must hold for an answer, from the answer
+ * itself: the ids of the request, in the request order, and the rows of the
+ * mix block. The function reads the sources of each line, not the part rows
+ * of the tab.
+ *
+ * A position with no mix and no element of the funds block that entered is
+ * a direct position. Its stock sources add to the row direct, and its other
+ * weight on a line of a class other than unknown gives a row position with
+ * the class of that line. A fund of a mix with no element of the position
+ * that entered gives a row part, and the rest of a mix gives a row rest.
+ * Then come the rows direct, held, and residual. The residual of a fund is
+ * its weight minus its covered weight, with a floor at 0 before schema
+ * version 1.11.
+ */
+function unreadReference(answer, ids, mixRows) {
+  const route = (value) =>
+    String(value ?? "")
+      .trim()
+      .replace(/^\$/, "")
+      .toUpperCase()
+      .replaceAll(".", "-");
+  const [major, minor] = String(answer.meta?.schemaVersion ?? "")
+    .split(".")
+    .map(Number);
+  const signed = major > 1 || (major === 1 && minor >= 11);
+  const top = topFundsOf(answer.funds);
+  const rows = [];
+  let direct = 0;
+  for (const id of ids) {
+    const mix = mixRows.filter((cells) => cells[0] === id);
+    if (mix.length > 0) {
+      const looked = top.filter((f) => f.id === id).map((f) => route(f.ticker));
+      const named = answer.funds.filter((f) => f.id === id).map((f) => route(f.ticker));
+      for (const [, weight, , ticker, share] of mix) {
+        if (looked.includes(route(ticker))) continue;
+        const line = answer.lines.find((l) => l.key === `ticker:${route(ticker)}` || route(l.ticker) === route(ticker));
+        const kind = line?.class ?? (named.includes(route(ticker)) ? "fund" : "other");
+        rows.push(["part", id, ticker, kind, weight * share]);
+      }
+      const described = mix.reduce((sum, cells) => sum + cells[4], 0);
+      if (1 - described > 1e-9) rows.push(["rest", id, "", "unknown", mix[0][1] * (1 - described)]);
+      continue;
+    }
+    if (top.some((f) => f.id === id)) continue;
+    let other = 0;
+    let largest = 0;
+    let kind = "";
+    for (const line of answer.lines) {
+      const whole = line.sources?.[id] ?? 0;
+      const stock = line.stockSources?.[id] ?? 0;
+      direct += stock;
+      const rest = whole - stock;
+      if (rest === 0 || line.class === "unknown") continue;
+      other += rest;
+      if (Math.abs(rest) > largest) [largest, kind] = [Math.abs(rest), line.class];
+    }
+    if (other !== 0) rows.push(["position", id, "", kind, other]);
+  }
+  const held = answer.funds
+    .filter((f) => (f.heldBy ?? null) !== null)
+    .reduce((sum, f) => sum + (f.entered === false ? f.weight : f.weight - f.coveredWeight), 0);
+  const residual = top.reduce((sum, f) => {
+    const open = f.weight - f.coveredWeight;
+    return sum + (signed ? open : Math.max(0, open));
+  }, 0);
+  if (Math.abs(direct) > 1e-12) rows.push(["direct", "", "", "stock", direct]);
+  if (Math.abs(held) > 1e-12) rows.push(["held", "", "", "fund", held]);
+  if (Math.abs(residual) > 1e-12) rows.push(["residual", "", "", "cash", residual]);
+  return rows;
+}
+
+/**
+ * Check the unread block of a tab against unreadReference, and check the two
+ * sums of the report on the blocks that the script writes. The weights of
+ * the unseen block and of the unread block add up to notLookedThroughWeight
+ * within 0.01%. The part weights of the lines block, which the Composition
+ * block and the total of all lines add, add up to weightSum. Give the
+ * difference of each sum.
+ */
+function checkUnread(sheet, name, answer) {
+  const ids = sheet.block(4, SOURCE_AT, 1, MAX_POSITIONS)[0].filter((id) => id !== "");
+  const mixRows = blockRows(sheet, MIX_AT, MIX_FIELDS.length);
+  const unread = blockRows(sheet, UNREAD_AT, 5);
+  const want = unreadReference(answer, ids, mixRows);
+  check(
+    sameRows(unread, want),
+    `${name}: the unread block AR:AV holds the ${want.length} parts of the weight not looked through ` +
+      `outside the unseen block (${JSON.stringify(unread.map((cells) => cells.slice(0, 4)))})`,
+  );
+  const unseen = blockRows(sheet, UNSEEN_AT, 2);
+  const shown = sumCells(unseen.map((cells) => cells[1])) + sumCells(unread.map((cells) => cells[4]));
+  const gap = shown - answer.measures.notLookedThroughWeight;
+  check(
+    Math.abs(gap) <= 1e-4,
+    `${name}: the rows of the unseen block and the unread block add up to notLookedThroughWeight within ` +
+      `0.01% (difference ${gap.toExponential(2)})`,
+  );
+  const parts = blockRows(sheet, LINE_AT, PART_AT - LINE_AT + 1);
+  const weightAt = LINE_FIELDS.indexOf("weight");
+  const stockAt = LINE_FIELDS.indexOf("stockWeight");
+  const partSum = parts.reduce((sum, cells) => {
+    const part = cells[PART_AT - LINE_AT];
+    if (part === "stock") return sum + cells[stockAt];
+    if (part === "other") return sum + cells[weightAt] - cells[stockAt];
+    return sum;
+  }, 0);
+  const total = partSum - answer.measures.weightSum;
+  check(
+    Math.abs(total) <= 1e-9,
+    `${name}: the part weights of the lines block, which the Composition block and the total of all lines ` +
+      `add, add up to weightSum (difference ${total.toExponential(2)})`,
+  );
+  console.log(
+    `  ${name}: not looked through ${(answer.measures.notLookedThroughWeight * 100).toFixed(4)}%, rows ` +
+      `${(shown * 100).toFixed(4)}%; total of all lines ${(partSum * 100).toFixed(4)}%`,
+  );
+  return { unread, partSum };
+}
+
+/**
  * The last row of the blocks left of the lines block: the equity block, or
  * the last row of the longest of the funds, the overlaps, the mixes, and the
  * blocks that the script computes.
@@ -2499,7 +2637,7 @@ function checkComputed(sheet, name, partCount) {
 function topLastOf(sheet, computed) {
   return Math.max(
     EQUITY_ROW + EQUITY.length - 1,
-    ...[FUND_AT, OVERLAP_AT, MIX_AT].map((column) => 4 + blockRows(sheet, column, 1).length),
+    ...[FUND_AT, OVERLAP_AT, MIX_AT, UNREAD_AT].map((column) => 4 + blockRows(sheet, column, 1).length),
     ...[computed.unseen, computed.stockFunds, computed.own, computed.groups].map((rows) => 4 + rows.length),
   );
 }
@@ -3118,6 +3256,79 @@ function main() {
     JSON.stringify(computeStock) === JSON.stringify([["F"]]),
     "stockFundRows gives each fund one time, no fund whose stock cells add up to 0, and no fund that did not " +
       `enter (${JSON.stringify(computeStock)})`,
+  );
+  check(
+    ["1.11", "1.12", "2.0", " 1.11 "].every((version) => context.signedResidual({ schemaVersion: version })) &&
+      ["1.10", "1.9", "1", "", null].every((version) => !context.signedResidual({ schemaVersion: version })) &&
+      !context.signedResidual(undefined) &&
+      !context.signedResidual(null),
+    "signedResidual is true from schema version 1.11, and false for 1.10, 1.9, and an answer with no version",
+  );
+  check(
+    context.routeTicker(" $brk.b ") === "BRK-B" && context.routeTicker("VOO") === "VOO",
+    "routeTicker gives the ticker form of the funds block",
+  );
+  /**
+   * A hand answer for the unread block. F entered and covers more than its
+   * weight. It holds a held fund that entered and covers more than its
+   * weight, and a held fund that did not enter. S is a fund that did not
+   * enter. T is a trust, K is a stock, and U is a ticker of the class
+   * unknown. M has a mix: the fund VOO entered and covers less than its
+   * weight, the trust GLD did not enter, and the mix describes 80% of M.
+   */
+  const unreadIds = ["F", "S", "T", "K", "U", "M"];
+  const unreadFunds = [
+    { id: "F", ticker: "F", heldBy: null, entered: true, weight: 0.3, coveredWeight: 0.31 },
+    { id: "F", ticker: null, heldBy: "S000000001", entered: true, weight: 0.05, coveredWeight: 0.052 },
+    { id: "F", ticker: null, heldBy: "S000000001", entered: false, weight: 0.01, coveredWeight: 0 },
+    { id: "S", ticker: "S", heldBy: null, entered: false, weight: 0.1, coveredWeight: 0 },
+    { id: "M", ticker: "VOO", partWeight: 0.5, heldBy: null, entered: true, weight: 0.1, coveredWeight: 0.098 },
+  ];
+  const unreadLines = [
+    lineOf("lei:X", "stock", 0.39, { F: 0.3, K: 0.05, M: 0.04 }, 0.39, { F: 0.3, K: 0.05, M: 0.04 }),
+    lineOf("ticker:S", "fund", 0.1, { S: 0.1 }),
+    lineOf("ticker:T", "trust", 0.15, { T: 0.15 }),
+    lineOf("ticker:U", "unknown", 0.07, { U: 0.07 }),
+    { ...lineOf("ticker:GLD", "trust", 0.06, { M: 0.06 }), ticker: "GLD" },
+    lineOf("id:M", "unknown", 0.04, { M: 0.04 }),
+  ];
+  const unreadMixes = [
+    ["M", 0.2, 46000, "VOO", 0.5, false],
+    ["M", 0.2, 46000, "GLD", 0.3, false],
+  ];
+  const unreadParts = context.partRows(unreadLines, unreadIds);
+  const unreadWant = (residual) => [
+    ["position", "S", "", "fund", 0.1],
+    ["position", "T", "", "trust", 0.15],
+    ["part", "M", "GLD", "trust", 0.06],
+    ["rest", "M", "", "unknown", 0.04],
+    ["direct", "", "", "stock", 0.05],
+    ["held", "", "", "fund", -0.002 + 0.01],
+    ["residual", "", "", "cash", residual],
+  ];
+  const unreadSigned = context.unreadRows(unreadParts, unreadIds, unreadFunds, unreadMixes, true);
+  check(
+    sameRows(unreadSigned, unreadWant(-0.01 + 0.002)),
+    "unreadRows gives a row for each direct position that is not a stock or unknown, each fund of a mix that " +
+      "did not enter, the rest of a mix, the direct stocks, the held funds, and the net residual below 0 " +
+      `(${JSON.stringify(unreadSigned)})`,
+  );
+  const unreadFloored = context.unreadRows(unreadParts, unreadIds, unreadFunds, unreadMixes, false);
+  check(
+    sameRows(unreadFloored, unreadWant(0.002)),
+    `unreadRows floors each residual at 0 before schema version 1.11 (${JSON.stringify(unreadFloored)})`,
+  );
+  check(
+    JSON.stringify(context.unseenRows(unreadParts, unreadIds, unreadMixes)) ===
+      JSON.stringify([
+        ["F", 0],
+        ["S", 0],
+        ["T", 0],
+        ["K", 0],
+        ["U", 0.07],
+        ["M", 0],
+      ]),
+    "the unseen block holds the ticker of the class unknown, so the unread block leaves it out",
   );
   const computeSheet = new FakeSheet(EXPOSURE_TAB, 40, SOURCE_AT + MAX_POSITIONS - 1, []);
   computeSheet.grid[3].splice(SOURCE_AT - 1, computeIds.length, ...computeIds);
@@ -3937,7 +4148,7 @@ function main() {
     insertAt > setAt[2] && flushes[2] > chartInserts[1] && flushes[2] < setAt[3],
     "run 1 draws the two charts, then flushes again before the run-time write, so the run time includes the charts",
   );
-  const runOneComputed = checkComputed(x, "run 1", parts.length);
+  const runOneComputed = checkComputed(x, "run 1", parts.length, JSON.parse(answerText));
   checkDataWrites(afterFetch, "run 1", topLastOf(x, runOneComputed), parts.length, ids.length, x);
   const textRanges = afterFetch
     .filter((e) => e.op === "setNumberFormat" && e.value === "@")
@@ -5076,7 +5287,7 @@ function main() {
     JSON.stringify(mixPartCells) === JSON.stringify(mixParts),
     "the part rows hold the lines of the answer with parts",
   );
-  const mixComputed = checkComputed(x, "run 15", mixParts.length);
+  const mixComputed = checkComputed(x, "run 15", mixParts.length, mixAnswer);
   check(
     mixComputed.unseen.find(([id]) => id === PLAN_FUND)?.[1] === 0 &&
       blockRows(x, UNSEEN_AT, 2).find(([id]) => id === PLAN_FUND)?.[1] === 0,
@@ -5248,7 +5459,7 @@ function main() {
     JSON.stringify(partRowsOf(x, fullParts.length, idRow().length)) === JSON.stringify(fullParts),
     `run 18: the lines block holds the ${fullParts.length} part rows of the answer`,
   );
-  checkComputed(x, "run 18", fullParts.length);
+  checkComputed(x, "run 18", fullParts.length, fullAnswer);
   const fullOwn = blockRows(x, OWN_AT, 5);
   const moneyRow = fullOwn.find((cells) => cells[0] === `ticker:${MONEY}`);
   check(
@@ -5295,7 +5506,7 @@ function main() {
         ]),
     "run 19: the lines block holds the stock part and the other part of the cap line last",
   );
-  checkComputed(x, "run 19", capParts.length);
+  checkComputed(x, "run 19", capParts.length, capAnswer);
   const capOwn = blockRows(x, OWN_AT, 5).find((cells) => cells[0] === "other:lines");
   check(
     capOwn !== undefined &&
@@ -5314,11 +5525,11 @@ function main() {
       "says and more when the cap line holds stock",
   );
   check(
-    report.cell("C19").endsWith(",'Concentration.Exposure'!$AR$5:$AR,\"<>other:lines\")") &&
+    report.cell("C19").endsWith(",'Concentration.Exposure'!$AX$5:$AX,\"<>other:lines\")") &&
       report
         .cell("C20")
         .endsWith(
-          "+SUMIFS('Concentration.Exposure'!$AX$5:$AX,'Concentration.Exposure'!$AY$5:$AY,\"stock\",'Concentration.Exposure'!$AR$5:$AR,\"other:lines\")",
+          "+SUMIFS('Concentration.Exposure'!$BD$5:$BD,'Concentration.Exposure'!$BE$5:$BE,\"stock\",'Concentration.Exposure'!$AX$5:$AX,\"other:lines\")",
         ),
     "the composition puts the stock part of the cap line under the threshold, whatever its weight",
   );
@@ -5370,7 +5581,7 @@ function main() {
       .every((cells) => cells[LINE_FIELDS.length] === "other"),
     "run 20: each part row of a trust line is of the other part, so no trust is a company row",
   );
-  checkComputed(x, "run 20", trustParts.length);
+  checkComputed(x, "run 20", trustParts.length, trustAnswer);
   const trustOwn = blockRows(x, OWN_AT, 5);
   const trustRow = trustOwn.find((cells) => cells[0] === `ticker:${TRUST}`);
   check(
@@ -5404,6 +5615,164 @@ function main() {
       trustSpill.includes('"trust","Trusts and closed-end funds inside funds"') &&
       trustSpill.includes('"trust","trust or closed-end fund",x'),
     "the report names a direct trust line, a direct cash line, and the group trust",
+  );
+  state.documentProperties.clear();
+  replaceHoldings(HOLDINGS_ROWS);
+
+  /**
+   * The invented holdings of the two index funds for the runs with residual
+   * lines on both sides of 0. The percents of fund A add up to 102, and the
+   * percents of fund B add up to 97.
+   */
+  const residualFunds = {
+    [FUND_A]: OFFLINE_FUNDS[FUND_A].map((h) => (h.class === "cash" ? { ...h, pct: 6 } : h)),
+    [FUND_B]: OFFLINE_FUNDS[FUND_B].map((h) => (h.class === "cash" ? { ...h, pct: 3 } : h)),
+  };
+  /**
+   * The direct lines of the runs with residual lines: a trust, a fund that
+   * did not enter, a stock, and two holdings of the class unknown.
+   */
+  const residualKinds = (signed, version) => ({
+    direct: { ...TRUST_KINDS.direct, [MONEY]: OFFLINE_DIRECT[MONEY] },
+    notEntered: OFFLINE_NOT_ENTERED,
+    funds: residualFunds,
+    signed,
+    version,
+  });
+  /**
+   * Run Refresh with a synthetic answer of the residual funds, the Holdings
+   * rows with the trust, and a mix of fund A, the trust in the mix, and an
+   * undescribed rest for the plan fund. Give the answer.
+   */
+  const residualRun = (name, signed, version) => {
+    replaceHoldings([...HOLDINGS_ROWS, [TRUST, "Example brokerage", 500, "Example index trust"]]);
+    state.documentProperties.set(
+      `${MIX_PREFIX}${PLAN_FUND}`,
+      JSON.stringify({
+        entered: "2026-09-01",
+        parts: [
+          { ticker: FUND_A, percent: 50, substitute: false },
+          { ticker: MIX_TRUST, percent: 30, substitute: false },
+        ],
+      }),
+    );
+    state.fetchHandler = (url, options) => {
+      const positions = JSON.parse(options.payload).positions;
+      answerText = JSON.stringify(offlineAnswer(positions, 2000, residualKinds(signed, version)));
+      return fakeResponse(200, answerText);
+    };
+    const before = book.tab(REPORT_TAB).state();
+    logFrom = state.log.length;
+    pause(2);
+    const times = timedRun();
+    check(x.cell("B1") === "OK", `${name}: B1 is OK (B1 holds "${x.cell("B1")}")`);
+    checkNoTabChange(before, logFrom, name);
+    checkRecorded(name, times);
+    return JSON.parse(answerText);
+  };
+
+  console.log("\n== Run 21: a synthetic answer of schema version 1.11 with residual lines on both sides of 0");
+  const signedAnswer = residualRun("run 21", true, "1.11");
+  const signedLine = (ticker) => signedAnswer.lines.find((l) => l.key === `residual:${ticker}`);
+  check(
+    signedLine(FUND_A)?.weight < 0 &&
+      signedLine(FUND_A).name === "Liabilities net of other assets" &&
+      signedLine(FUND_B)?.weight > 0 &&
+      signedLine(FUND_B).name === "Cash and other net assets" &&
+      Math.abs(signedAnswer.measures.weightSum - 1) < 1e-12 &&
+      Math.abs(signedAnswer.measures.lookedThroughWeight + signedAnswer.measures.notLookedThroughWeight - 1) < 1e-12,
+    "run 21: the answer holds a residual line below 0 and one above 0, and the two weight measures add up to " +
+      "weightSum, which is 1",
+  );
+  const signedParts = expectedParts(signedAnswer.lines, idRow());
+  check(
+    JSON.stringify(partRowsOf(x, signedParts.length, idRow().length)) === JSON.stringify(signedParts),
+    `run 21: the lines block holds the ${signedParts.length} part rows of the answer`,
+  );
+  const signedChecked = checkUnread(x, "run 21", signedAnswer);
+  checkComputed(x, "run 21", signedParts.length);
+  check(
+    Math.abs(signedChecked.partSum - 1) < 1e-9,
+    `run 21: the Composition block and the total of all lines add up to 100.00% (${signedChecked.partSum})`,
+  );
+  const signedOwn = blockRows(x, OWN_AT, 5);
+  const ownResidual = (rows, ticker) => rows.find((cells) => cells[0] === `residual:${ticker}`);
+  check(
+    ownResidual(signedOwn, FUND_A)?.[1] === FUND_A &&
+      near(ownResidual(signedOwn, FUND_A)[3], signedLine(FUND_A).weight) &&
+      ownResidual(signedOwn, FUND_A)[3] < 0 &&
+      ownResidual(signedOwn, FUND_A)[4] === `${FUND_A}, ${PLAN_FUND}` &&
+      ownResidual(signedOwn, FUND_B)?.[1] === FUND_B &&
+      near(ownResidual(signedOwn, FUND_B)[3], signedLine(FUND_B).weight) &&
+      ownResidual(signedOwn, FUND_B)[3] > 0,
+    "run 21: the residual line below 0 has a row of its own with the fund ticker and a weight below 0, and the " +
+      `residual line above 0 has one too (${JSON.stringify(signedOwn.filter((cells) => String(cells[0]).startsWith("residual:")))})`,
+  );
+  const kinds = new Map(signedChecked.unread.map((cells) => [`${cells[0]} ${cells[1]} ${cells[2]}`, cells]));
+  const residualSum = topFundsOf(signedAnswer.funds).reduce((sum, f) => sum + f.weight - f.coveredWeight, 0);
+  check(
+    kinds.get(`position ${TRUST} `)?.[3] === "trust" &&
+      near(kinds.get(`position ${TRUST} `)[4], 500 / 10500) &&
+      kinds.get(`position ${MONEY} `)?.[3] === "fund" &&
+      kinds.get(`part ${PLAN_FUND} ${MIX_TRUST}`)?.[3] === "trust" &&
+      near(kinds.get(`rest ${PLAN_FUND} `)?.[4], (1000 / 10500) * 0.2) &&
+      near(kinds.get("direct  ")?.[4], 1000 / 10500) &&
+      kinds.get("held  ")?.[4] < 0 &&
+      near(kinds.get("residual  ")?.[4], residualSum) &&
+      residualSum < 0,
+    "run 21: the unread block holds the trust, the fund that did not enter, the trust in the mix, the rest of " +
+      "the mix, the direct stock, the held fund, and the net residual below 0",
+  );
+  const signedSpill = report.cell(SPILL_CELL);
+  check(
+    signedSpill.includes(
+      'IF(LEFT(k,9)="residual:",IF(w<0,"liabilities net of other assets","cash and other net assets"),',
+    ) && signedSpill.includes("kind,MAP(ok,oc,on,ow,LAMBDA(k,c,n,w,"),
+    "the report gives a residual row below 0 the kind liabilities net of other assets, and keeps cash and other " +
+      "net assets for a residual row above 0",
+  );
+  for (const text of [
+    `"${UNSEEN_TITLE}",`,
+    '"Securities you hold directly"',
+    '"Funds held by your funds"',
+    '"Cash and liabilities of your funds, net"',
+    '"Every holding is looked through."',
+    'MAP(kc,kn,LAMBDA(c,n,IF(c="",n,kk(c))))',
+    "cv,VSTACK(ct,cs,cg,cd),",
+  ]) {
+    check(signedSpill.includes(text), `${SPILL_CELL} holds ${text}`);
+  }
+  check(
+    !signedSpill.includes("can then be above 100%") && report.cell(SPILL_CELL).includes("so the total is 100%."),
+    "the note under the total states the line of liabilities net of other assets, not a total above 100%",
+  );
+
+  console.log("\n== Run 21b: the same holdings with an answer of schema version 1.10, each residual line 0 or more");
+  const flooredAnswer = residualRun("run 21b", false, "1.10");
+  check(
+    flooredAnswer.lines
+      .filter((l) => l.key.startsWith("residual:"))
+      .every((l) => l.weight >= 0 && l.name === "Cash and other net assets"),
+    "run 21b: each residual line of the answer holds 0 or more and the name Cash and other net assets",
+  );
+  const flooredParts = expectedParts(flooredAnswer.lines, idRow());
+  const flooredComputed = checkComputed(x, "run 21b", flooredParts.length, flooredAnswer);
+  check(
+    sameRows(blockRows(x, OWN_AT, 5), flooredComputed.own) &&
+      sameRows(blockRows(x, UNSEEN_AT, 2), flooredComputed.unseen),
+    "run 21b: the own rows and the unseen rows follow the rule of the answers with no residual below 0",
+  );
+  const flooredOwn = blockRows(x, OWN_AT, 5);
+  check(
+    ownResidual(flooredOwn, FUND_A) === undefined &&
+      ownResidual(flooredOwn, FUND_B)?.[3] > 0 &&
+      flooredOwn.every((cells) => !String(cells[0]).startsWith("residual:") || cells[3] > 0),
+    "run 21b: the floored residual line of fund A has no row, and the residual row of fund B is above 0",
+  );
+  const unsignedResidual = blockRows(x, UNREAD_AT, 5).find((cells) => cells[0] === "residual");
+  check(
+    unsignedResidual !== undefined && unsignedResidual[4] > 0,
+    `run 21b: the net residual row adds the residual of fund B alone (${JSON.stringify(unsignedResidual)})`,
   );
   state.documentProperties.clear();
   replaceHoldings(HOLDINGS_ROWS);

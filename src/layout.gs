@@ -46,7 +46,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads, or changes the format of a cell. The
  * next refresh then replaces the two tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 15;
+const LAYOUT_VERSION = 16;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -111,18 +111,31 @@ const OVERLAP_ROW = 24;
 const REPORT_ROW = 26;
 
 /**
- * The share of the portfolio at or above which a holding that the route
- * cannot look through gets a row of its own in the section of the funds not
+ * The share of the portfolio at or above which a holding with lines of the
+ * class unknown gets a row of its own in the section of the holdings not
  * looked through.
  */
 const UNSEEN_FLOOR = 0.01;
 
 /**
- * The title of the section of the funds not looked through, and the text of
- * each row of a holding with no mix.
+ * The title of the section of the holdings not looked through, the text of
+ * each row of a holding with no mix whose lines are of the class unknown,
+ * and the text of the section when it holds no row.
  */
-const UNSEEN_TITLE = "Funds not looked through";
+const UNSEEN_TITLE = "Holdings not looked through";
 const ADD_MIX_NOTE = "Add its fund mix: Concentration › Describe a fund";
+const ALL_SEEN = "Every holding is looked through.";
+
+/**
+ * The text in column A of the three rows of the section of the holdings not
+ * looked through that add up the rows direct, held, and residual of the
+ * unread block.
+ */
+const UNREAD_LABELS = {
+  direct: "Securities you hold directly",
+  held: "Funds held by your funds",
+  residual: "Cash and liabilities of your funds, net",
+};
 
 /**
  * The count of days after which the report asks the person to check a mix.
@@ -252,7 +265,8 @@ function equityCell(name) {
  * The column letters of the blocks of the tab Concentration.Exposure that the
  * report formulas read: the funds block, the overlaps block, the mix block,
  * the unseen block, the stock fund block, the own block, the group block,
- * the lines block, and the sources block. The sources block ends at the
+ * the unread block, the lines block, and the sources block. The sources
+ * block ends at the
  * column of position MAX_POSITIONS, because a request holds MAX_POSITIONS
  * positions at most.
  */
@@ -261,6 +275,7 @@ function exposureColumns() {
   const mix = (name) => columnLetter(MIX_COLUMN + MIX_FIELDS.indexOf(name));
   const own = (name) => columnLetter(OWN_COLUMN + OWN_FIELDS.indexOf(name));
   const group = (name) => columnLetter(GROUP_COLUMN + GROUP_FIELDS.indexOf(name));
+  const unread = (name) => columnLetter(UNREAD_COLUMN + UNREAD_FIELDS.indexOf(name));
   const line = (name) => columnLetter(LINE_COLUMN + LINE_FIELDS.indexOf(name));
   return {
     fundId: fund("id"),
@@ -278,6 +293,11 @@ function exposureColumns() {
     mixSubstitute: mix("substitute"),
     unseenId: columnLetter(UNSEEN_COLUMN),
     unseenWeight: columnLetter(UNSEEN_COLUMN + 1),
+    unreadKind: unread("unreadKind"),
+    unreadId: unread("unreadId"),
+    unreadPart: unread("unreadPart"),
+    unreadClass: unread("unreadClass"),
+    unreadWeight: unread("unreadWeight"),
     stockFund: columnLetter(STOCK_FUND_COLUMN),
     ownKey: own("ownKey"),
     ownName: own("ownName"),
@@ -443,7 +463,7 @@ function otherSumFormula() {
  * The note under the total of the report spill.
  */
 const SUM_NOTE =
-  "The positions in a fund report can add up to more than 100% of the net assets of the fund. This total can then be above 100%.";
+  "A fund report can list positions worth more than 100% of the fund. A negative line, liabilities net of other assets, takes off the part above 100%, so the total is 100%.";
 
 /**
  * The note under the header of the fund overlap list.
@@ -471,8 +491,8 @@ const NO_NAME = "No symbol or description";
  * holdings chart sits, the note on trusts, the header of the company table,
  * the company table, the header row of the company chart, the band of
  * CHART_BAND_ROWS blank rows in which the company chart sits, the fund
- * overlap list, the section of the funds not looked through, the section of
- * the other holdings, and the total. The header row of the holdings chart
+ * overlap list, the section of the holdings not looked through, the section
+ * of the other holdings, and the total. The header row of the holdings chart
  * holds HOLDINGS_HEADING in column A, and the header row of the company
  * chart holds the text of chartHeading in column A, so the anchor cells of
  * the hidden tab find them.
@@ -482,8 +502,9 @@ const NO_NAME = "No symbol or description";
  * a share of the portfolio in column E. A title, a note, and a text that
  * replaces an empty list are in column A. The fund overlap list holds the two
  * funds in A and B, and the overlap, the count of shared securities, and the
- * weight of each fund in E to H. The section of the funds not looked through
- * holds the holding, the fund in the mix, the value, the share, and the note
+ * weight of each fund in E to H. The section of the holdings not looked
+ * through holds the holding, the fund in the mix, the value, the share, and
+ * the note
  * in A, B, D, E, and F. The section of the other holdings holds the line,
  * the kind, the value, the share, and the funds that the line came from in
  * A, B, D, E, and F. The total of all lines holds its label in A, the value
@@ -520,16 +541,31 @@ const NO_NAME = "No symbol or description";
  * securities. It goes into that row whatever its weight, and the count of the
  * row then ends with "and more".
  *
- * The section of the funds not looked through gives one row to each holding
- * with no mix whose lines of the class unknown hold UNSEEN_FLOOR or more of
- * the portfolio, and one row to the rest of those holdings. Then it gives one
- * row to each fund of each mix, with the substitute mark and the entry date
- * of the mix, and one Not described row to each mix with a total under 100%.
- * A mix older than MIX_AGE_DAYS asks the person to check the fact sheet. MI,
- * MW, ME, MT, MP, and MS are the columns of the mix block. hn gives the
- * Description of the Holdings tab for a Symbol, or the text that it gets.
- * Each piece of the section has a seventh column. The text "x" in it marks a
- * row that the section drops.
+ * The section of the holdings not looked through shows each part of the
+ * value Not looked through. The rows of the unseen block and the rows of the
+ * unread block hold those parts, so the rows of the section add up to that
+ * value. The mix rows of the funds that the route looked through are the one
+ * exception: they show a part of a holding that entered, and they add
+ * nothing to the value. NK, NI, NP, NC, and NW are the columns of the unread
+ * block: the kind, the position id, the fund in the mix, the class, and the
+ * weight.
+ *
+ * The section gives one row to each holding with no mix whose lines of the
+ * class unknown hold UNSEEN_FLOOR or more of the portfolio, and one row to
+ * each row position of the unread block, with the kind of its class in the
+ * note. These rows sort by value, largest first. One row follows for the
+ * rest of the holdings with lines of the class unknown. The rows direct,
+ * held, and residual of the unread block follow, with the texts of
+ * UNREAD_LABELS. Then the section gives one row to each fund of each mix,
+ * with the substitute mark and the entry date of the mix, and one Not
+ * described row to each mix with a total under 100%. The row of a fund that
+ * the route did not look through, a row part of the unread block, shows the
+ * kind of its class in place of the entry date. A mix older than
+ * MIX_AGE_DAYS asks the person to check the fact sheet. MI, MW, ME, MT, MP,
+ * and MS are the columns of the mix block. hn gives the Description of the
+ * Holdings tab for a Symbol, or the text that it gets. kk gives the kind of
+ * a class. Each piece of the section has a seventh column. The text "x" in
+ * it marks a row that the section drops.
  *
  * The script writes the rows of the other part that get a row of their own
  * into the own block, and the groups of the other rows of the other part
@@ -538,8 +574,11 @@ const NO_NAME = "No symbol or description";
  * the cap line, holds a direct position, or has the class unknown. Each
  * other row of the other part goes into the group of its class. The own row
  * of a residual line names the fund ticker, so oname shows the Description
- * of that fund. The route gives the class trust to a direct line alone, and
- * the class cash also to a direct line of a money market fund. Each such
+ * of that fund. A residual row with a weight below 0 has the kind
+ * liabilities net of other assets, and another residual row has the kind
+ * cash and other net assets. The route gives the class trust to a direct
+ * line alone, and the class cash also to a direct line of a money market
+ * fund. Each such
  * line that holds a direct position gets a row of its own with the kind of
  * its class. The line of a trust in a fund mix that holds a fund has no
  * direct weight, so it goes into the group trust. keep selects the rows of
@@ -584,6 +623,8 @@ yours,IF(ISNA(hs)+ISNA(hd)+ISNA(hv)>0,"${HOLDINGS_COLUMNS_NOTE}",
 MI,${column(x.mixId)},MW,${column(x.mixWeight)},ME,${column(x.mixEntered)},
 MT,${column(x.mixTicker)},MP,${column(x.mixPart)},MS,${column(x.mixSubstitute)},
 hn,LAMBDA(n,IF(ISNA(hs)+ISNA(hd),n,IFNA(XLOOKUP(n,INDIRECT("Holdings!C"&hs,FALSE),INDIRECT("Holdings!C"&hd,FALSE)),n))),
+kk,LAMBDA(c,SWITCH(c,"fund","fund, no holdings data","trust","trust or closed-end fund, no holdings data","cash","money market fund",
+ "unknown","not in the SEC data","preferred","preferred shares","stock","security",c)),
 pw,ARRAYFORMULA(IF(LP="${STOCK_PART}",LX,IF(LP="${OTHER_PART}",LW-LX,0))),
 dw,${column(x.direct)},
 sel,ARRAYFORMULA((LP="${STOCK_PART}")*ISNUMBER(LX)*(LX>=thr)*(LK<>"${CAP_KEY}")),
@@ -601,28 +642,42 @@ rk,COUNTIFS(LP,"${STOCK_PART}",LK,"${CAP_KEY}"),
 rf,MAP(f,LAMBDA(x,IFERROR(SUM(FILTER(INDEX(LS,0,XMATCH(x,LH)),rsel)),0))),
 rest,HSTACK(SUM(sel)+1,"Securities under "&TEXT(thr,"0.00%")&" ("&TEXT(rc,"#,##0")&IF(rk>0," and more","")&")","",rw*tot,rw,"",ROUND(SUM(IFNA(FILTER(dw,rsel),0)),12),TRANSPOSE(rf)),
 ${unseenNames()}
+NK,${column(x.unreadKind)},NI,${column(x.unreadId)},NP,${column(x.unreadPart)},NC,${column(x.unreadClass)},NW,${column(x.unreadWeight)},
 cx,{"","","","","","","x"},
 cu,LET(q,IFNA(FILTER(uid,uu>=${floor}),""),
  IF(INDEX(q,1,1)="",cx,
   LET(qw,IFNA(FILTER(uu,uu>=${floor}),0),qe,MAKEARRAY(ROWS(q),1,LAMBDA(i,j,"")),
    SORT(HSTACK(MAP(q,LAMBDA(v,hn(v))),qe,ARRAYFORMULA(qw*tot),qw,MAKEARRAY(ROWS(q),1,LAMBDA(i,j,"${ADD_MIX_NOTE}")),qe,qe),4,FALSE)))),
+cpn,SUM(ARRAYFORMULA(IF(NK="${UNREAD_KINDS.position}",1,0))),
+cp,IF(cpn=0,cx,
+ LET(xi,IFNA(FILTER(NI,NK="${UNREAD_KINDS.position}"),""),xc,IFNA(FILTER(NC,NK="${UNREAD_KINDS.position}"),""),
+  xw,IFNA(FILTER(NW,NK="${UNREAD_KINDS.position}"),0),xe,MAKEARRAY(ROWS(xi),1,LAMBDA(i,j,"")),
+  HSTACK(MAP(xi,LAMBDA(v,hn(v))),xe,ARRAYFORMULA(xw*tot),xw,MAP(xc,LAMBDA(c,kk(c))),xe,xe))),
+ct,SORT(IFNA(FILTER(VSTACK(cu,cp),CHOOSECOLS(VSTACK(cu,cp),7)<>"x"),cx),4,FALSE),
 csn,SUM(ARRAYFORMULA(IF((uu>1E-12)*(uu<${floor}),1,0))),
 csw,SUM(ARRAYFORMULA(IF(uu<${floor},uu,0))),
 cs,IF(csn=0,cx,HSTACK("Holdings under ${floor * 100}% ("&csn&")","",csw*tot,csw,"${ADD_MIX_NOTE}","","")),
+cgs,ARRAYFORMULA((NK="${UNREAD_KINDS.direct}")+(NK="${UNREAD_KINDS.held}")+(NK="${UNREAD_KINDS.residual}")),
+cgn,SUM(ARRAYFORMULA(IF(cgs>0,1,0))),
+cg,IF(cgn=0,cx,
+ LET(ak,IFNA(FILTER(NK,cgs>0),""),aw,IFNA(FILTER(NW,cgs>0),0),ae,MAKEARRAY(ROWS(ak),1,LAMBDA(i,j,"")),
+  HSTACK(MAP(ak,LAMBDA(k,SWITCH(k,"${UNREAD_KINDS.direct}","${UNREAD_LABELS.direct}","${UNREAD_KINDS.held}","${UNREAD_LABELS.held}","${UNREAD_LABELS.residual}"))),
+   ae,ARRAYFORMULA(aw*tot),aw,ae,ae,ae))),
 cdn,SUM(ARRAYFORMULA(IF(MI<>"",1,0))),
 cd,IF(cdn=0,cx,
  LET(ki,IFNA(FILTER(MI,MI<>""),""),kw,IFNA(FILTER(MW,MI<>""),0),ke,IFNA(FILTER(ME,MI<>""),0),
   kt,IFNA(FILTER(MT,MI<>""),""),kp,IFNA(FILTER(MP,MI<>""),0),ks,IFNA(FILTER(MS,MI<>""),FALSE),
   kn,MAP(ke,LAMBDA(d,"Mix entered "&TEXT(d,"mmmm yyyy")&IF(TODAY()-d>${MIX_AGE_DAYS}," — check the fact sheet",""))),
-  kr,HSTACK(MAP(ki,LAMBDA(v,hn(v))),ARRAYFORMULA(kt&IF(ks," (substitute)","")),ARRAYFORMULA(kw*kp*tot),ARRAYFORMULA(kw*kp),kn,ki,
-   MAKEARRAY(ROWS(ki),1,LAMBDA(i,j,0))),
+  kc,MAP(ki,kt,LAMBDA(a,b,IFNA(INDEX(FILTER(NC,EXACT(NI,a)*EXACT(NP,b)*(NK="${UNREAD_KINDS.part}")),1),""))),
+  kr,HSTACK(MAP(ki,LAMBDA(v,hn(v))),ARRAYFORMULA(kt&IF(ks," (substitute)","")),ARRAYFORMULA(kw*kp*tot),ARRAYFORMULA(kw*kp),
+   MAP(kc,kn,LAMBDA(c,n,IF(c="",n,kk(c)))),ki,MAKEARRAY(ROWS(ki),1,LAMBDA(i,j,0))),
   ku,UNIQUE(ki),
   kv,MAP(ku,LAMBDA(v,XLOOKUP(v,ki,kw)*(1-SUM(IFNA(FILTER(kp,ki=v),0))))),
   ko,HSTACK(MAP(ku,LAMBDA(v,hn(v))),MAKEARRAY(ROWS(ku),1,LAMBDA(i,j,"Not described")),ARRAYFORMULA(kv*tot),kv,
    MAP(ku,LAMBDA(v,XLOOKUP(v,ki,kn))),ku,MAKEARRAY(ROWS(ku),1,LAMBDA(i,j,1))),
   SORT(VSTACK(kr,IFNA(FILTER(ko,kv>1E-9),cx)),6,TRUE,7,TRUE))),
-cv,VSTACK(cu,cs,cd),
-can,IFNA(FILTER(CHOOSECOLS(cv,1,2,3,4,5),CHOOSECOLS(cv,7)<>"x"),{"Every fund is looked through.","","","",""}),
+cv,VSTACK(ct,cs,cg,cd),
+can,IFNA(FILTER(CHOOSECOLS(cv,1,2,3,4,5),CHOOSECOLS(cv,7)<>"x"),{"${ALL_SEEN}","","","",""}),
 cb,MAKEARRAY(ROWS(can),1,LAMBDA(i,j,"")),
 keep,ARRAYFORMULA(ISNUMBER(${column(x.ownWeight)})*1),
 nown,SUM(keep),
@@ -631,10 +686,8 @@ ow,FILTER(${column(x.ownWeight)},keep),came,FILTER(${column(x.ownSources)},keep)
 oname,IF(ISNA(hs)+ISNA(hd),on,
  LET(sc,INDIRECT("Holdings!C"&hs,FALSE),sy,ARRAYFORMULA(IF(ROW(sc)=1,"",sc)),de,INDIRECT("Holdings!C"&hd,FALSE),
   MAP(on,LAMBDA(n,IFNA(XLOOKUP(n,sy,de),n))))),
-kind,MAP(ok,oc,on,LAMBDA(k,c,n,IF(LEFT(k,9)="residual:","cash and other net assets",IF(k="${CAP_KEY}","many small lines, combined",
- IF(RIGHT(n,16)=" (not described)","not described",
- SWITCH(c,"fund","fund, no holdings data","trust","trust or closed-end fund, no holdings data","cash","money market fund",
-  "unknown","not in the SEC data","preferred","preferred shares",c)))))),
+kind,MAP(ok,oc,on,ow,LAMBDA(k,c,n,w,IF(LEFT(k,9)="residual:",IF(w<0,"liabilities net of other assets","cash and other net assets"),
+ IF(k="${CAP_KEY}","many small lines, combined",IF(RIGHT(n,16)=" (not described)","not described",kk(c)))))),
 ownRows,HSTACK(oname,kind,ARRAYFORMULA(ow*tot),ow,came),
 grp,ARRAYFORMULA(ISNUMBER(${column(x.groupWeight)})*1),
 cls,FILTER(${column(x.groupClass)},grp),
@@ -1118,6 +1171,8 @@ function exposureLayout() {
       [span(OWN_COLUMN, OWN_FIELDS.length)]: 110,
       [letter(GROUP_COLUMN - 1)]: 24,
       [span(GROUP_COLUMN, GROUP_FIELDS.length)]: 110,
+      [letter(UNREAD_COLUMN - 1)]: 24,
+      [span(UNREAD_COLUMN, UNREAD_FIELDS.length)]: 110,
       [letter(LINE_COLUMN - 1)]: 24,
       [letter(LINE_COLUMN)]: 220,
       [letter(LINE_COLUMN + 1)]: 260,
@@ -1149,6 +1204,7 @@ function exposureLayout() {
       { range: header(STOCK_FUND_COLUMN, STOCK_FUND_FIELDS.length), values: [STOCK_FUND_FIELDS] },
       { range: header(OWN_COLUMN, OWN_FIELDS.length), values: [OWN_FIELDS] },
       { range: header(GROUP_COLUMN, GROUP_FIELDS.length), values: [GROUP_FIELDS] },
+      { range: header(UNREAD_COLUMN, UNREAD_FIELDS.length), values: [UNREAD_FIELDS] },
       { range: header(LINE_COLUMN, LINE_FIELDS.length + 2), values: [[...LINE_FIELDS, "part", "directWeight"]] },
       { range: `A${RUN_HEADER_ROW}:B${RUN_HEADER_ROW}`, values: [["runStart", "seconds"]] },
       { range: `A${EQUITY_HEADER_ROW}:B${EQUITY_HEADER_ROW}`, values: [["equity", "value"]] },
@@ -1199,6 +1255,7 @@ function exposureLayout() {
       { range: data(x.ownWeight), numberFormat: "0.00000" },
       { range: data(x.groupWeight), numberFormat: "0.00000" },
       { range: data(x.groupCount), numberFormat: "#,##0" },
+      { range: data(x.unreadWeight), numberFormat: "0.00000" },
       { range: `${x.weight}5:${x.stock}`, numberFormat: "0.00000" },
       { range: data(x.direct), numberFormat: "0.00000" },
       { range: `${x.first}5:${x.last}`, numberFormat: "0.00000" },

@@ -40,7 +40,7 @@ WHAT YOU GET
 - Measures of your securities alone: how much of your portfolio is in company securities, how much of them sits in your 10 largest companies, and your effective number of securities.
 - A fund overlap list that shows how much of each pair of your funds sits in the same securities, so you can spot two funds that give you the same exposure. You pick the smallest overlap to show (10% to start).
 - An Other holdings section with the cash, bonds, Treasury securities, and other holdings inside your funds, in their own rows.
-- A Funds not looked through section with each fund whose holdings the report cannot read.
+- A Holdings not looked through section with each part of your portfolio that the report cannot look inside: funds with no holdings report, trusts, the stocks you hold directly, and the cash and liabilities of your funds.
 - The date of the portfolio report of each fund, so you know how current the data is.
 - A Describe a fund sidebar for a fund that is not looked through, such as a trust fund in a 401(k) plan. Type the funds that it holds from its fact sheet, and the report looks inside them too. The report shows how much of your portfolio its measures cover.
 
