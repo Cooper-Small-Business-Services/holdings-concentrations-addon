@@ -3730,9 +3730,22 @@ function main() {
     "the row of the securities under the threshold holds the next rank, the count of the company rows plus 1",
   );
   const reportStyles = new Map(JSON.parse(created[REPORT_TAB]).styles);
+  const compositionRow = vm.runInContext("COMPOSITION_ROW", context);
+  const currencyCells = [
+    cellKey(vm.runInContext("TOTAL_ROW", context), 2),
+    cellKey(compositionRow + 1, 2),
+    cellKey(compositionRow + 2, 2),
+    cellKey(compositionRow + 3, 2),
+    cellKey(26, 4),
+    cellKey(27, 4),
+  ];
   check(
-    reportStyles.get(cellKey(vm.runInContext("TOTAL_ROW", context), 2))?.numberFormat === "$#,##0.00",
-    "the total value cell shows the cents, so it matches the sum of the Value column",
+    currencyCells.every((key) => reportStyles.get(key)?.numberFormat === "$#,##0.00"),
+    "each currency cell of the report shows the cents: the total value, the three composition values, and the Value column of the spill",
+  );
+  check(
+    [...reportStyles.values()].every((style) => style.numberFormat !== "$#,##0"),
+    "no cell of the report has a whole-dollar format",
   );
   const reportRules = JSON.parse(created[REPORT_TAB]).rules;
   const restRules = reportRules.filter((rule) => rule.formula === '=LEFT($B26,17)="Securities under "');

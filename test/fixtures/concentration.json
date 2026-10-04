@@ -228,7 +228,7 @@
       },
       {
         "range": "B19:B21",
-        "numberFormat": "$#,##0"
+        "numberFormat": "$#,##0.00"
       },
       {
         "range": "C19:C21",
@@ -256,7 +256,7 @@
       },
       {
         "range": "D26:D",
-        "numberFormat": "$#,##0",
+        "numberFormat": "$#,##0.00",
         "align": "RIGHT"
       },
       {
