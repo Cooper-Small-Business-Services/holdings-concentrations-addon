@@ -46,7 +46,7 @@ const REPORT_TAB = "Concentration";
  * that a formula or the script reads, or changes the format of a cell. The
  * next refresh then replaces the two tabs of each spreadsheet.
  */
-const LAYOUT_VERSION = 16;
+const LAYOUT_VERSION = 17;
 
 /**
  * The cell of the tab Concentration.Exposure that holds the layout version.
@@ -1391,7 +1391,7 @@ function reportLayout(inputs = {}) {
       { range: `A${stocks + 5}`, color: "#6b6962", italic: true },
       { range: `A${comp}:C${comp}`, bold: true, background: "#f7f6f1", color: "#1d1c1a" },
       { range: `B${comp}:C${comp}`, align: "right" },
-      { range: `B${comp + 1}:B${comp + 3}`, numberFormat: "$#,##0" },
+      { range: `B${comp + 1}:B${comp + 3}`, numberFormat: "$#,##0.00" },
       { range: `C${comp + 1}:C${comp + 3}`, numberFormat: "0.00%" },
       { range: `A${THRESHOLD_ROW}:A${OVERLAP_ROW}`, bold: true },
       {
@@ -1403,7 +1403,7 @@ function reportLayout(inputs = {}) {
       },
       { range: `C${THRESHOLD_ROW}:C${OVERLAP_ROW}`, color: "#6b6962", italic: true },
       { range: `A${first}:A`, numberFormat: "0" },
-      { range: `D${first}:D`, numberFormat: "$#,##0", align: "right" },
+      { range: `D${first}:D`, numberFormat: "$#,##0.00", align: "right" },
       { range: `E${first}:E`, numberFormat: "0.00%", align: "right" },
       { range: `F${first}:F`, numberFormat: "#,##0", wrap: true },
       { range: `G${first}:${last}`, numberFormat: '0.00%;-0.00%;""', align: "right" },
