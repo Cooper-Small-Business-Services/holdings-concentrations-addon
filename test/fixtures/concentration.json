@@ -1,6 +1,6 @@
 {
   "tab": "Concentration",
-  "note": "The concentration report. It reads the hidden tab Concentration.Exposure and the Holdings tab. Every cell is a label, a formula, the threshold cell B2, or the overlap minimum cell B3. The three frozen rows hold the title and the disclaimer in row 1 and the two cells in rows 2 and 3, each with its label in column A and its help text in column C. B4 holds the subtitle, and D4 holds the note on the held fund reports. B6 counts the holdings that are funds not looked through. B11 and B12 read the run-time block A16:B25 of Concentration.Exposure. B14 holds the coverage label of the measures. The section Holdings, the header row of the holdings chart, the band of 26 blank rows in which the holdings chart sits, the note on trusts, the header of the company table, the company table, the header row of the company chart with the threshold, the band of 26 blank rows in which the company chart sits, the fund overlap list, the section of the holdings not looked through, the section of the other holdings, and the total are one spill from A28.",
+  "note": "The concentration report. It reads the hidden tab Concentration.Exposure and the Holdings tab. Every cell is a label, a formula, the threshold cell B2, or the overlap minimum cell B3. The four frozen rows hold the title and the disclaimer in row 1, the two cells in rows 2 and 3, each with its label in column A and its help text in column C, and the subtitle row 4. B4 holds the subtitle, and D4 holds the note on the held fund reports. B6 counts the holdings that are funds not looked through. B11 and B12 read the run-time block A16:B25 of Concentration.Exposure. B14 holds the coverage label of the measures. The section Holdings, the header row of the holdings chart, the band of 26 blank rows in which the holdings chart sits, the note on trusts, the header of the company table, the company table, the header row of the company chart with the threshold, the band of 26 blank rows in which the company chart sits, the fund overlap list, the section of the holdings not looked through, the section of the other holdings, and the total are one spill from A28.",
   "cells": [
     {
       "range": "A1:B1",
@@ -133,7 +133,7 @@
   ],
   "format": {
     "reset": true,
-    "frozenRows": 3,
+    "frozenRows": 4,
     "columnWidths": {
       "A": 250,
       "B": 300,

@@ -3523,12 +3523,13 @@ function main() {
   check(report.cell(MINIMUM_CELL) === 0.1, `the overlap minimum cell ${MINIMUM_CELL} holds its default 0.1`);
   const createdReport = JSON.parse(created[REPORT_TAB]);
   check(
-    createdReport.frozenRows === 3 &&
+    createdReport.frozenRows === 4 &&
       report.cell("A2") === "Threshold" &&
       report.cell("A3") === "Overlap minimum" &&
       THRESHOLD_CELL === "B2" &&
-      MINIMUM_CELL === "B3",
-    "the three frozen rows hold the title row and the two cells that a person types in, with the labels in column A",
+      MINIMUM_CELL === "B3" &&
+      report.cell("B4") === "Securities by company, with a look inside each fund.",
+    "the four frozen rows hold the title row, the two cells that a person types in with the labels in column A, and the subtitle row, so Enter after an edit of B3 selects a frozen cell",
   );
   check(
     report.cell("C2") ===
