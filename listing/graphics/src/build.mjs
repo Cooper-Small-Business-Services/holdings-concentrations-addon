@@ -1,14 +1,14 @@
 /**
- * Build each graphic of the Marketplace listing from the files in this
- * directory:
+ * Build the icons and the banner of the Marketplace listing from the SVG
+ * sources in this directory, and check the screenshots:
  *
  *   node listing/graphics/src/build.mjs
  *
- * The script writes the PNG files into listing/graphics/. It renders the
- * icon and the banner from their SVG sources, and it renders each screenshot
- * from the demo spreadsheet page with invented data. It stops with an error
- * when a shown value does not add up after the rounding of the display, or
- * when a file does not have its pixel size.
+ * The script renders each icon and the banner into a PNG file in
+ * listing/graphics/. It does not write the screenshots. The screenshots are
+ * captures of the demo spreadsheet in Google Sheets. The script checks the
+ * pixel size of each PNG file and stops with an error when a file does not
+ * have its size.
  *
  * The script needs the package `playwright`. It uses the Chromium build of
  * Playwright, or the installed Google Chrome when that build is absent.
@@ -18,11 +18,6 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-
-import { bookTitle, funds, holdings, lastRun, stockSymbols } from "./demo-data.mjs";
-import { buildPositions, concentration } from "./route.mjs";
-import { buildReport, findFaults } from "./report.mjs";
-import { renderPage } from "./sheet.mjs";
 
 const SRC = dirname(fileURLToPath(import.meta.url));
 const OUT = dirname(SRC);
@@ -41,24 +36,14 @@ const BANNER = { width: 220, height: 140, source: "banner.svg" };
 /** The screenshot size. */
 const SHOT = { width: 1280, height: 800 };
 
-/** The views of the screenshots. */
+/** The screenshot files, in the order of the listing. */
 const SHOTS = [
-  {
-    file: "screenshot-1-report.png",
-    threshold: 0.01,
-    view: { firstRow: 2, selected: "B4", formula: "=SUM(Holdings!I2:I)" },
-  },
-  {
-    file: "screenshot-2-menu.png",
-    threshold: 0.01,
-    view: { firstRow: 2, selected: "B4", formula: "=SUM(Holdings!I2:I)", menuOpen: true },
-  },
-  {
-    file: "screenshot-3-lines.png",
-    threshold: 0.01,
-    view: { firstRow: 10, selected: "B18", formula: "Kestrel Semiconductor" },
-  },
-  { file: "screenshot-4-threshold.png", threshold: 0.02, view: { firstRow: 2, selected: "B15", formula: "2%" } },
+  "screenshot-1-report.png",
+  "screenshot-2-menu.png",
+  "screenshot-3-holdings.png",
+  "screenshot-4-companies.png",
+  "screenshot-5-lines.png",
+  "screenshot-6-describe-a-fund.png",
 ];
 
 /**
@@ -111,10 +96,6 @@ async function renderSvg(browser, source, width, height, file, transparent) {
   expectSize(file, width, height);
 }
 
-const positions = buildPositions(holdings);
-const answer = concentration(positions, funds, stockSymbols);
-const css = readFileSync(join(SRC, "sheet.css"), "utf8");
-
 const browser = await launch();
 try {
   for (const icon of ICONS) {
@@ -128,20 +109,10 @@ try {
     join(OUT, `banner-${BANNER.width}x${BANNER.height}.png`),
     false,
   );
-
-  for (const shot of SHOTS) {
-    const report = buildReport({ answer, positions, holdings, threshold: shot.threshold, lastRun });
-    const faults = findFaults(report);
-    if (faults.length > 0) throw new Error(`${shot.file}: ${faults.join("; ")}`);
-    const html = renderPage({ report, view: shot.view, css, title: bookTitle });
-    const page = await browser.newPage({ viewport: SHOT, deviceScaleFactor: 1 });
-    await page.setContent(html);
-    await page.evaluate(() => document.fonts.ready);
-    const file = join(OUT, shot.file);
-    await page.screenshot({ path: file, clip: { x: 0, y: 0, ...SHOT } });
-    await page.close();
-    expectSize(file, SHOT.width, SHOT.height);
-  }
 } finally {
   await browser.close();
+}
+
+for (const shot of SHOTS) {
+  expectSize(join(OUT, shot), SHOT.width, SHOT.height);
 }
