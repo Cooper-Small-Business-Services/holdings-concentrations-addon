@@ -287,4 +287,5 @@ MIT. See [LICENSE](LICENSE).
 This Addon is for informational purposes only. It is not investment advice. The data comes from public SEC filings and
 can be inaccurate, incomplete, or out of date.
 
-Tiller Money is not affiliated with this Addon. Tiller does not make, endorse, or support it.
+Holdings Concentration for Tiller is an independent, third-party add-on. It is not affiliated with, endorsed by, or
+sponsored by Tiller LLC.

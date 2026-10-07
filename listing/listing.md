@@ -80,7 +80,7 @@ Ask a question or report an issue at https://github.com/Cooper-Small-Business-Se
 ABOUT US
 Cooper Small Business Services is a veteran-owned small business that provides bookkeeping services to small businesses. Learn more at https://www.coopersbs.com.
 
-Tiller is not affiliated with this add-on. Tiller does not make, endorse, or support it. Google Sheets is a trademark of Google LLC.
+Holdings Concentration for Tiller is an independent, third-party add-on. It is not affiliated with, endorsed by, or sponsored by Tiller LLC. Google Sheets is a trademark of Google LLC.
 ```
 
 ## Category
