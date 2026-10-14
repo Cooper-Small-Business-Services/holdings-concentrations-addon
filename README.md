@@ -253,19 +253,19 @@ The top of the report: the status, the measures, the composition, and the funds 
 
 The company table and the company chart.
 
-![The company table and chart](listing/graphics/screenshot-4-companies.png)
+![The company table and chart](listing/graphics/screenshot-3-companies.png)
 
 ---
 
 The fund overlap list, the holdings not looked through, and the other holdings inside the funds.
 
-![Fund overlap and other holdings](listing/graphics/screenshot-5-lines.png)
+![Fund overlap and other holdings](listing/graphics/screenshot-4-overlap.png)
 
 ---
 
 The Describe a fund sidebar, with a saved fund mix.
 
-![The Describe a fund sidebar](listing/graphics/screenshot-6-describe-a-fund.png)
+![The Describe a fund sidebar](listing/graphics/screenshot-5-describe-a-fund.png)
 
 ## Support
 

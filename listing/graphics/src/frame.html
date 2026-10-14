@@ -1,0 +1,66 @@
+<!doctype html>
+<!--
+  The frame of a listing screenshot, 1280 x 800 px, full bleed. build.mjs
+  writes the caption into the paragraph, and sets the capture and its crop
+  through the custom properties --capture, --crop-x, and --crop-y of the
+  capture box. The capture is a Google Sheets view at 100% zoom, shown at
+  its own pixel size with square corners. The caption is set in Cormorant
+  Garamond SemiBold, which the page loads from Google Fonts. Colors:
+  slate #233140 for the background and white #FFFFFF for the caption.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&display=block" />
+    <style>
+      :root {
+        --slate: #233140;
+        --white: #ffffff;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 800px;
+        overflow: hidden;
+        background: var(--slate);
+      }
+      .caption {
+        position: absolute;
+        left: 64px;
+        right: 64px;
+        top: 0;
+        height: 112px;
+        display: flex;
+        align-items: center;
+        margin: 0;
+        color: var(--white);
+        font-family: "Cormorant Garamond", serif;
+        font-weight: 600;
+        font-size: 40px;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .capture {
+        position: absolute;
+        left: 64px;
+        top: 112px;
+        width: 1216px;
+        height: 688px;
+        background-image: var(--capture);
+        background-repeat: no-repeat;
+        background-position: calc(-1px * var(--crop-x)) calc(-1px * var(--crop-y));
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.16),
+          0 12px 40px rgba(0, 0, 0, 0.45);
+      }
+    </style>
+  </head>
+  <body>
+    <p class="caption"></p>
+    <div class="capture"></div>
+  </body>
+</html>
