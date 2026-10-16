@@ -3,6 +3,9 @@
 This file holds the text of the store listing of the app in the Google Workspace Marketplace. Copy each field into the
 Store Listing page of the Google Workspace Marketplace SDK. The code block of a field holds the exact text.
 
+The live listing at https://workspace.google.com/marketplace/app/holdings_concentration_for_tiller/169841999655 is the
+page that these fields fill.
+
 ## Field limits
 
 | Field                | Limit                                                                                   | Source                                                                                                                                                                                                |
@@ -103,4 +106,4 @@ Free of charge
 | Terms of service | https://www.coopersbs.com/data/terms/                                                  |
 | Privacy policy   | https://www.coopersbs.com/privacy/                                                     |
 | Support          | https://github.com/Cooper-Small-Business-Services/holdings-concentrations-addon/issues |
-| Homepage         | Open. No homepage URL is chosen yet.                                                   |
+| Homepage         | https://www.coopersbs.com/data/                                                        |

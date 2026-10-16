@@ -93,6 +93,12 @@ funds they were substituted for. The numbers are an approximation when a substit
 Form N-PORT data is not real-time. Fund managers file quarterly, and the filing is due 60 days after the end of the
 quarter, so the data may be about 2 to 5 months old. The report shows the report date of each fund it looked through.
 
+## Install
+
+Install the Addon from its
+[Google Workspace Marketplace listing](https://workspace.google.com/marketplace/app/holdings_concentration_for_tiller/169841999655).
+Then get a free API key with the steps below.
+
 ## Get a free API key
 
 1. Go to [coopersbs.com/data](https://www.coopersbs.com/data/).
